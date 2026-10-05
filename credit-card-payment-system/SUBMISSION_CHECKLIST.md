@@ -1,0 +1,24 @@
+# Submission Checklist
+
+- [ ] GitHub repository link
+- [ ] MySQL database dump (`mysqldump`) with demo data only
+- [ ] Postman collection
+- [ ] UI screenshots:
+  - [ ] Register
+  - [ ] Login
+  - [ ] Dashboard
+  - [ ] Add Card
+  - [ ] Saved Cards
+  - [ ] Payment success
+  - [ ] Payment failure
+  - [ ] Transaction history/filter
+  - [ ] Admin dashboard
+  - [ ] Django admin
+  - [ ] FastAPI Swagger
+- [ ] Admin credentials shared securely
+- [ ] No CVV in DB
+- [ ] No full card number in DB
+- [ ] No plaintext passwords
+- [ ] JWT protected endpoints
+- [ ] Tests pass
+- [ ] README updated with screenshots and final URLs

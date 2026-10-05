@@ -1,0 +1,253 @@
+{
+  "info": {
+    "name": "Credit Card Payment System",
+    "_postman_id": "credit-card-payment-system-demo",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "django_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "fastapi_url",
+      "value": "http://localhost:8001"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "refresh",
+      "value": ""
+    },
+    {
+      "key": "card_id",
+      "value": "1"
+    },
+    {
+      "key": "user_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Register",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\":\"demo\",\"email\":\"demo@example.com\",\"password\":\"StrongPass123!\",\"password2\":\"StrongPass123!\"}"
+        },
+        "url": "{{django_url}}/api/auth/register/"
+      }
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\":\"demo\",\"password\":\"StrongPass123!\"}"
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "const tokens = pm.response.json();",
+                "pm.collectionVariables.set('token', tokens.access);",
+                "pm.collectionVariables.set('refresh', tokens.refresh);"
+              ]
+            }
+          }
+        ],
+        "url": "{{django_url}}/api/auth/login/"
+      }
+    },
+    {
+      "name": "Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"refresh\":\"{{refresh}}\"}"
+        },
+        "url": "{{django_url}}/api/auth/logout/"
+      }
+    },
+    {
+      "name": "Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.collectionVariables.set('user_id', pm.response.json().id);"
+              ]
+            }
+          }
+        ],
+        "url": "{{django_url}}/api/auth/me/"
+      }
+    },
+    {
+      "name": "Add Card",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"card_type\":\"CREDIT\",\"card_holder_name\":\"Demo User\",\"expiry_month\":12,\"expiry_year\":2030,\"card_number\":\"4111111111111111\",\"cvv\":\"123\"}"
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.collectionVariables.set('card_id', pm.response.json().id);"
+              ]
+            }
+          }
+        ],
+        "url": "{{django_url}}/api/cards/"
+      }
+    },
+    {
+      "name": "List Cards",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": "{{django_url}}/api/cards/"
+      }
+    },
+    {
+      "name": "Payment Success",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"user_id\":\"{{user_id}}\",\"card_id\":\"{{card_id}}\",\"amount\":\"100.00\",\"currency\":\"INR\"}"
+        },
+        "url": "{{fastapi_url}}/payments/"
+      }
+    },
+    {
+      "name": "Payment Failure",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"user_id\":\"{{user_id}}\",\"card_id\":\"{{card_id}}\",\"amount\":\"100.13\",\"currency\":\"INR\"}"
+        },
+        "url": "{{fastapi_url}}/payments/"
+      }
+    },
+    {
+      "name": "Transactions",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": "{{django_url}}/api/transactions/"
+      }
+    },
+    {
+      "name": "Admin Summary",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": "{{django_url}}/api/admin/summary/"
+      }
+    },
+    {
+      "name": "Admin CSV Export",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": "{{django_url}}/api/admin/export/"
+      }
+    }
+  ]
+}
