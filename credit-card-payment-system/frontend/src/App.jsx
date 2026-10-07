@@ -376,7 +376,7 @@ function Dashboard() {
         </div>
         {recentTransactions.length ? <div className="divide-y divide-slate-100">
           {recentTransactions.map(transaction => <div key={transaction.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:px-6">
-            <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{transaction.reference}</p><p className="mt-1 text-xs text-slate-500">{new Date(transaction.created_at).toLocaleString()}</p></div>
+            <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{transaction.reference}</p><p className="mt-1 text-xs text-slate-500">{new Date(transaction.created_at).toLocaleString()}</p><p className="mt-1 truncate font-mono text-xs text-slate-500">{transaction.card_mask || "Saved card"}</p></div>
             <StatusBadge status={transaction.status}/>
             <p className="col-start-2 row-start-1 text-right text-sm font-semibold tabular-nums sm:col-start-3">{money.format(Number(transaction.amount))}</p>
           </div>)}

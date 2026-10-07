@@ -97,6 +97,7 @@ describe("application routes", () => {
     expect(screen.getByText("Total amount spent")).toBeTruthy();
     expect(screen.getByText("Available credit")).toBeTruthy();
     expect(screen.getAllByText("TX-DASHBOARD-TEST").length).toBeGreaterThan(0);
+    expect(screen.getByText("************1111")).toBeTruthy();
     const invoices = screen.getByRole("region", { name: "Recent invoices" });
     expect(within(invoices).getByText("TX-DASHBOARD-TEST")).toBeTruthy();
     expect(within(invoices).queryByText("TX-FAILED-NO-INVOICE")).toBeNull();

@@ -3,8 +3,9 @@ from decimal import Decimal
 import uuid
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
 from .config import (
@@ -14,13 +15,14 @@ from .config import (
     JWT_ALGORITHM,
     CORS_ALLOWED_ORIGINS,
 )
-from .schemas import PaymentRequest, PaymentResponse
+from .schemas import DashboardSummary, PaymentRequest, PaymentResponse
 
 app = FastAPI(
     title="Credit Card Payment Service",
     version="1.0.0",
     description="Simulated payment processing service. No real payment gateway is used.",
 )
+bearer_auth = HTTPBearer(auto_error=False)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
@@ -76,8 +78,9 @@ async def django_request(
 
 @app.get("/dashboard/summary")
 async def dashboard_summary(
-    authorization: str | None = Header(default=None),
-):
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_auth),
+) -> DashboardSummary:
+    authorization = f"Bearer {credentials.credentials}" if credentials else None
     authenticated_user_id = authenticate_jwt(authorization)
     return await django_request(
         "GET",

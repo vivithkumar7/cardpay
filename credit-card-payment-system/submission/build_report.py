@@ -22,6 +22,7 @@ GOLD = colors.HexColor("#eabf56")
 CAPTURES = [
     ("Sign in", "login.png", "JWT sign-in screen for the local demo account."),
     ("Customer overview", "dashboard.png", "Payment totals, recent activity, and masked saved-card summary."),
+    ("Dashboard API contract", "fastapi-dashboard-summary.png", "FastAPI Swagger documents the dashboard summary route and its response models."),
     ("Cards", "cards.png", "Card entry and saved-card views; only the masked number is persisted."),
     ("Simulated payment success", "payment-success.png", "End-to-end success response from the simulated payment service."),
     ("Simulated payment failure", "payment-failure.png", "Deterministic failure response from the simulated payment service."),
@@ -29,7 +30,7 @@ CAPTURES = [
     ("Admin reporting", "admin-dashboard.png", "Staff-only transaction totals and daily reporting."),
     ("Django administration", "django-admin.png", "Authenticated Django administration site."),
     ("Django API documentation", "django-api-docs.png", "OpenAPI documentation for the Django REST API."),
-    ("FastAPI Swagger", "fastapi-swagger.png", "Payment-service Swagger UI and request schemas."),
+    ("FastAPI Swagger", "fastapi-swagger.png", "Payment-service Swagger UI, including the typed dashboard summary response."),
 ]
 
 
@@ -206,9 +207,9 @@ def build_report():
     story.extend([steps_table, Spacer(1, 5 * mm)])
     story.append(Paragraph("Verification", styles["CaptureHeading"]))
     test_summary = [
-        ["Django", "10 tests passed"],
-        ["FastAPI", "8 tests passed"],
-        ["Frontend", "2 tests passed; production build succeeded"],
+        ["Django", "12 tests passed"],
+        ["FastAPI", "11 tests passed"],
+        ["Frontend", "6 tests passed; production build succeeded"],
         ["Docker", "Not verified in this environment; Docker CLI unavailable"],
     ]
     test_table = Table(test_summary, colWidths=[36 * mm, 116 * mm])

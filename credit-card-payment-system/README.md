@@ -204,8 +204,8 @@ Django:
 FastAPI verifies the JWT and forwards only the authenticated user ID to Django's
 internal summary endpoint using the shared internal secret. Django queries
 transactions and related cards; the recent-transactions query selects related card
-data and is limited to five results. `total_amount_spent` and
-`current_month_spending` include successful transactions only.
+data and is limited to five results. `total_amount_spent` includes all transaction
+statuses; `current_month_spending` includes successful transactions only.
 `available_credit_limit` is the account's configured limit minus successful
 credit-card transactions, floored at zero. Configure limits in Django Admin under
 **User credit profiles**; new profiles default to `0.00`.
@@ -216,7 +216,7 @@ are for simulated payments and are not tax invoices.
 
 FastAPI:
 
-- GET `/dashboard/summary` (JWT required; successful transactions count toward spending)
+- GET `/dashboard/summary` (JWT required; total spend includes every transaction)
 - POST `/payments/`
 - GET `/health`
 - GET `/version`
@@ -264,6 +264,8 @@ limited to five entries.
 
 The dashboard summary UI screenshot is available at
 [submission/screenshots/dashboard-summary.png](./submission/screenshots/dashboard-summary.png).
+The FastAPI route and example response are documented in
+[submission/screenshots/fastapi-dashboard-summary.png](./submission/screenshots/fastapi-dashboard-summary.png).
 The screenshot uses mocked API data and contains no real account information.
 Other submission screenshots are in `submission/screenshots/`.
 

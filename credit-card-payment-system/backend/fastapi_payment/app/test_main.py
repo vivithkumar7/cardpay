@@ -46,13 +46,40 @@ def test_dashboard_summary_requires_jwt():
     django_request.assert_not_awaited()
 
 
+def test_dashboard_summary_openapi_documents_bearer_auth_and_response_fields():
+    operation = app.openapi()["paths"]["/dashboard/summary"]["get"]
+    assert {"HTTPBearer": []} in operation["security"]
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema["$ref"] == "#/components/schemas/DashboardSummary"
+    summary_fields = app.openapi()["components"]["schemas"]["DashboardSummary"]["properties"]
+    assert set(summary_fields) == {
+        "total_transactions",
+        "total_amount_spent",
+        "current_month_spending",
+        "available_credit_limit",
+        "last_5_transactions",
+    }
+    transaction_fields = app.openapi()["components"]["schemas"]["TransactionSummary"]["properties"]
+    assert {"amount", "card_mask", "created_at", "status"} <= set(transaction_fields)
+
+
 def test_dashboard_summary_forwards_authenticated_user_to_django():
     summary = {
         "total_transactions": 2,
         "total_amount_spent": "20.00",
         "current_month_spending": "10.00",
         "available_credit_limit": "80.00",
-        "last_5_transactions": [],
+        "last_5_transactions": [{
+            "id": 1,
+            "amount": "10.00",
+            "currency": "INR",
+            "status": "SUCCESS",
+            "reference": "TX-SUMMARY-1",
+            "failure_reason": "",
+            "card_mask": "************1111",
+            "created_at": "2026-10-07T10:00:00Z",
+            "updated_at": "2026-10-07T10:00:00Z",
+        }],
     }
     with patch(
         "app.main.django_request",
