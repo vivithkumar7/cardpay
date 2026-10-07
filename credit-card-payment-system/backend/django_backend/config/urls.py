@@ -2,10 +2,13 @@ from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import RedirectView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from transactions.views import DashboardSummaryView
 
 urlpatterns = [
     path("", RedirectView.as_view(url="/api/docs/", permanent=False), name="home"),
     path("api/", RedirectView.as_view(url="/api/docs/", permanent=False), name="api-home"),
+    path("dashboard/summary", DashboardSummaryView.as_view(), name="dashboard-summary"),
+    path("api/dashboard/summary/", DashboardSummaryView.as_view(), name="dashboard-summary-api"),
     path("admin/", admin.site.urls),
     path("api/auth/", include("accounts.urls")),
     path("api/cards/", include("cards.urls")),

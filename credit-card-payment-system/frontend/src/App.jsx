@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { django, fastapi } from "./api";
+import { AUTH_EXPIRED_EVENT, django, fastapi } from "./api";
 
 function Layout({ children }) {
   const navigate = useNavigate();
@@ -8,6 +8,12 @@ function Layout({ children }) {
   const [user, setUser] = useState(null);
   const isAuthPage = location.pathname === "/login" || location.pathname === "/register";
   const isAuthenticated = Boolean(localStorage.getItem("access") || sessionStorage.getItem("access"));
+
+  useEffect(() => {
+    const handleAuthExpired = () => navigate("/login", { replace: true });
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, [navigate]);
 
   useEffect(() => {
     let active = true;
@@ -192,6 +198,8 @@ function Dashboard() {
   const [user, setUser] = useState(null);
   const [cards, setCards] = useState([]);
   const [tx, setTx] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retryCount, setRetryCount] = useState(0);
@@ -200,27 +208,52 @@ function Dashboard() {
     let active = true;
     setLoading(true);
     setError("");
-    Promise.all([
-      django.get("/api/auth/me/"),
-      django.get("/api/cards/"),
-      django.get("/api/transactions/")
-    ]).then(([userResponse, cardResponse, transactionResponse]) => {
-      if (!active) return;
-      setUser(userResponse.data);
-      setCards(cardResponse.data);
-      setTx(transactionResponse.data);
-    }).catch((requestError) => {
-      if (active) setError(requestError.response?.data?.detail || "We couldn't load your dashboard. Check your connection and try again.");
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
+    const loadDashboard = async () => {
+      try {
+        const userResponse = await django.get("/api/auth/me/");
+        if (!active) return;
+
+        const accessToken = localStorage.getItem("access") || sessionStorage.getItem("access");
+        const [cardResponse, transactionResponse, summaryResponse] = await Promise.all([
+          django.get("/api/cards/"),
+          django.get("/api/transactions/"),
+          fastapi.get("/dashboard/summary", {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          })
+        ]);
+        if (!active) return;
+
+        setUser(userResponse.data);
+        setCards(cardResponse.data);
+        setTx(transactionResponse.data);
+        setSummary(summaryResponse.data);
+      } catch (requestError) {
+        if (!active) return;
+        const message = requestError.response?.status === 401
+          ? "Your session has expired. Sign in again to load your dashboard."
+          : requestError.response?.data?.detail || "We couldn't load your dashboard. Check your connection and try again.";
+        setError(message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadDashboard();
     return () => { active = false; };
   }, [retryCount]);
+
+  useEffect(() => {
+    if (!selectedInvoice) return undefined;
+    const closeOnEscape = event => {
+      if (event.key === "Escape") setSelectedInvoice(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selectedInvoice]);
 
   const successfulTransactions = tx.filter(transaction => transaction.status === "SUCCESS");
   const failedTransactions = tx.filter(transaction => transaction.status === "FAILED");
   const pendingTransactions = tx.filter(transaction => transaction.status === "PENDING");
-  const successfulVolume = successfulTransactions.reduce((total, transaction) => total + Number(transaction.amount), 0);
   const successRate = tx.length ? Math.round((successfulTransactions.length / tx.length) * 100) : 0;
   const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
   const today = new Date();
@@ -239,39 +272,63 @@ function Dashboard() {
     };
   });
   const peakActivity = Math.max(1, ...activityDays.map(day => day.count));
-  const recentTransactions = tx.slice(0, 5);
+  const recentTransactions = summary?.last_5_transactions || [];
+  const recentInvoices = successfulTransactions.slice(0, 5);
+  const downloadInvoice = transaction => {
+    const invoiceHtml = createInvoiceHtml(transaction, user, money);
+    const file = new Blob([invoiceHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    const safeReference = transaction.reference.replace(/[^a-zA-Z0-9_-]/g, "-");
+    link.href = url;
+    link.download = `PaySecure-invoice-${safeReference}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
-  if (loading) return <div className="mx-auto max-w-7xl py-16 text-center text-sm text-slate-500" role="status">Loading your overview…</div>;
-  if (error) return <div className="mx-auto max-w-7xl py-16 text-center"><p role="alert" className="text-sm text-rose-700">{error}</p><button onClick={() => setRetryCount(count => count + 1)} className="mt-4 rounded-md bg-[#111311] px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">Try again</button></div>;
+  if (loading) return <div className="dashboard-page mx-auto max-w-7xl" role="status" aria-label="Loading dashboard">
+    <div className="h-8 w-64 animate-pulse rounded bg-slate-200"/>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({length: 4}, (_, index) => <div key={index} className="min-h-32 animate-pulse rounded-lg border border-slate-200 bg-white p-5"><div className="h-3 w-28 rounded bg-slate-200"/><div className="mt-6 h-7 w-36 rounded bg-slate-200"/><div className="mt-3 h-3 w-24 rounded bg-slate-100"/></div>)}</div>
+    <div className="animate-pulse rounded-lg border border-slate-200 bg-white p-6"><div className="h-5 w-44 rounded bg-slate-200"/>{Array.from({length: 5}, (_, index) => <div key={index} className="mt-5 h-12 rounded bg-slate-100"/>)}</div>
+  </div>;
+  if (error) return <div className="mx-auto max-w-7xl py-16 text-center"><p role="alert" className="text-sm text-rose-700">{error}</p>{error.includes("Sign in again") && <Link to="/login" className="mt-4 inline-block rounded-md bg-[#f5df35] px-4 py-2 text-sm font-semibold text-[#1d1800]">Sign in</Link>}<button onClick={() => setRetryCount(count => count + 1)} className="mt-4 rounded-md bg-[#111311] px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">Try again</button></div>;
 
   return <div className="dashboard-page">
-    <header className="page-heading dashboard-heading">
-      <div>
-        <p className="eyebrow">YOUR MONEY, AT A GLANCE</p>
-        <h1>Good to see you, <span>{user?.username}</span></h1>
-        <p className="page-subtitle">A calm, clear view of your payment activity.</p>
+    <header className="dashboard-heading">
+      <div className="dashboard-welcome">
+        <p className="dashboard-kicker"><span aria-hidden="true" /> YOUR PERSONAL OVERVIEW</p>
+        <h1>Welcome back, <span>{user?.username}</span></h1>
+        <p className="dashboard-intro">Your cards, spending, and recent activity—all in one place.</p>
       </div>
-      <div className="heading-actions">
-        <Link to="/cards" className="button-secondary">Manage cards</Link>
-        <Link to="/payment" className="button-primary">Make a payment <span aria-hidden="true">↗</span></Link>
+      <div className="dashboard-heading-side">
+        <p className="dashboard-date">{new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</p>
+        <div className="heading-actions">
+          <Link to="/cards" className="button-secondary">Manage cards</Link>
+          <Link to="/payment" className="button-primary">Make a payment <span aria-hidden="true">↗</span></Link>
+        </div>
       </div>
+      <span className="dashboard-orb dashboard-orb-one" aria-hidden="true" />
+      <span className="dashboard-orb dashboard-orb-two" aria-hidden="true" />
     </header>
 
     <section aria-label="Payment statistics" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Stat label="Successful volume" value={money.format(successfulVolume)} note={`${successfulTransactions.length} settled payment${successfulTransactions.length === 1 ? "" : "s"}`} marker="₹" markerClass="bg-amber-100 text-amber-900"/>
-      <Stat label="Transactions" value={tx.length} note={`${pendingTransactions.length} pending`} marker="↗" markerClass="bg-slate-100 text-slate-800"/>
-      <Stat label="Success rate" value={`${successRate}%`} note={`${failedTransactions.length} failed`} marker="%" markerClass="bg-emerald-100 text-emerald-800"/>
-      <Stat label="Saved cards" value={cards.length} note="Card numbers stay masked" marker="••" markerClass="bg-stone-100 text-stone-700"/>
+      <Stat label="Total amount spent" value={money.format(Number(summary.total_amount_spent))} note="Settled card purchases" marker="₹" markerClass="bg-amber-100 text-amber-900"/>
+      <Stat label="This month" value={money.format(Number(summary.current_month_spending))} note={new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date())} marker="◷" markerClass="bg-emerald-100 text-emerald-800"/>
+      <Stat label="Available credit" value={money.format(Number(summary.available_credit_limit))} note={`${cards.filter(card => card.card_type === "CREDIT").length} credit card${cards.filter(card => card.card_type === "CREDIT").length === 1 ? "" : "s"} on file`} marker="↗" markerClass="bg-slate-100 text-slate-800"/>
+      <Stat label="Total transactions" value={summary.total_transactions} note={`${pendingTransactions.length} awaiting completion`} marker="#" markerClass="bg-stone-100 text-stone-700"/>
     </section>
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.8fr)]">
-      <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <article className="dashboard-panel dashboard-activity rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold">Transaction activity</h2>
-            <p className="mt-1 text-xs text-slate-500">Daily payment attempts over the last seven days</p>
+            <p className="dashboard-section-label">YOUR SPENDING PULSE</p>
+            <h2 className="mt-1 text-base font-semibold">Transaction activity</h2>
+            <p className="mt-1 text-xs text-slate-500">Payment attempts over the last seven days</p>
           </div>
-          <span className="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500">7 days</span>
+          <span className="dashboard-period rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500">Last 7 days</span>
         </div>
         <div className="mt-6 flex h-44 items-end gap-2 sm:gap-4" role="img" aria-label="Stacked bar chart of successful, failed, and pending transactions over the last seven days">
           {activityDays.map(day => {
@@ -294,9 +351,9 @@ function Dashboard() {
         </div>
       </article>
 
-      <article className="rounded-lg border border-slate-200 bg-[#111311] p-5 text-white shadow-sm sm:p-6">
+      <article className="dashboard-panel dashboard-health rounded-lg border border-slate-200 bg-[#111311] p-5 text-white shadow-sm sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div><h2 className="text-base font-semibold">Payment health</h2><p className="mt-1 text-xs text-white/55">Across all your transactions</p></div>
+          <div><p className="dashboard-section-label">AT A GLANCE</p><h2 className="mt-1 text-base font-semibold">Payment health</h2><p className="mt-1 text-xs text-white/55">Across your recent activity</p></div>
           <span className="rounded-md bg-white/10 px-2 py-1 text-xs text-amber-200">{successRate}%</span>
         </div>
         <div className="mt-7 h-2 overflow-hidden rounded-full bg-white/10" aria-label={`${successRate}% success rate`}>
@@ -312,9 +369,9 @@ function Dashboard() {
     </section>
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.85fr)]">
-      <article className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <article className="dashboard-panel dashboard-recent overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
-          <div><h2 className="text-base font-semibold">Recent transactions</h2><p className="mt-1 text-xs text-slate-500">Your latest payment activity</p></div>
+          <div><p className="dashboard-section-label">LATEST ACTIVITY</p><h2 className="mt-1 text-base font-semibold">Recent transactions</h2><p className="mt-1 text-xs text-slate-500">Your five most recent card transactions</p></div>
           <Link to="/transactions" className="shrink-0 text-xs font-semibold text-emerald-800 hover:text-emerald-950">View history <span aria-hidden="true">→</span></Link>
         </div>
         {recentTransactions.length ? <div className="divide-y divide-slate-100">
@@ -326,9 +383,9 @@ function Dashboard() {
         </div> : <div className="px-6 py-10 text-center"><p className="text-sm font-medium">No transactions yet</p><p className="mt-1 text-xs text-slate-500">Your payment activity will appear here.</p></div>}
       </article>
 
-      <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <article className="dashboard-panel dashboard-cards rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex items-center justify-between gap-3">
-          <div><h2 className="text-base font-semibold">Saved cards</h2><p className="mt-1 text-xs text-slate-500">{cards.length} card{cards.length === 1 ? "" : "s"} on file</p></div>
+          <div><p className="dashboard-section-label">YOUR WALLET</p><h2 className="mt-1 text-base font-semibold">Saved cards</h2><p className="mt-1 text-xs text-slate-500">{cards.length} card{cards.length === 1 ? "" : "s"} on file</p></div>
           <Link to="/cards" aria-label="Manage saved cards" className="text-xs font-semibold text-emerald-800 hover:text-emerald-950">Manage</Link>
         </div>
         {cards.length ? <div className="mt-5 space-y-3">
@@ -340,7 +397,116 @@ function Dashboard() {
         </div> : <div className="mt-5 rounded-md border border-dashed border-slate-300 px-4 py-6 text-center"><p className="text-sm text-slate-600">No cards saved</p><Link to="/cards" className="mt-2 inline-block text-xs font-semibold text-emerald-800">Add a card <span aria-hidden="true">→</span></Link></div>}
       </article>
     </section>
+
+    <section className="dashboard-panel dashboard-invoices overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" aria-labelledby="recent-invoices-heading">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-5 sm:px-6">
+        <div>
+          <p className="dashboard-section-label">PAYMENT RECORDS</p>
+          <h2 id="recent-invoices-heading" className="mt-1 text-base font-semibold">Recent invoices</h2>
+          <p className="mt-1 text-xs text-slate-500">Receipts for your latest successful payments</p>
+        </div>
+        <span className="invoice-count">{recentInvoices.length} available</span>
+      </div>
+      {recentInvoices.length ? <div className="divide-y divide-slate-100">
+        {recentInvoices.map(transaction => <div key={transaction.id} className="invoice-row">
+          <span className="invoice-icon" aria-hidden="true">↗</span>
+          <div className="invoice-main">
+            <p className="invoice-reference">{transaction.reference}</p>
+            <p className="invoice-date">{new Date(transaction.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })} · Paid</p>
+          </div>
+          <p className="invoice-amount">{money.format(Number(transaction.amount))}</p>
+          <button type="button" className="invoice-view-button" onClick={() => setSelectedInvoice(transaction)}>View receipt <span aria-hidden="true">→</span></button>
+          <button type="button" className="invoice-download-icon" aria-label={`Download invoice ${transaction.reference}`} title="Download invoice" onClick={() => downloadInvoice(transaction)}>↓</button>
+        </div>)}
+      </div> : <div className="invoice-empty">
+        <span aria-hidden="true">▤</span>
+        <p>No invoices yet</p>
+        <span>Receipts will appear here after successful payments.</span>
+      </div>}
+    </section>
+
+    {selectedInvoice && <div className="invoice-modal-backdrop" onClick={() => setSelectedInvoice(null)}>
+      <section
+        className="invoice-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="invoice-dialog-title"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="invoice-modal-head">
+          <div className="invoice-brand"><span aria-hidden="true">P</span><div><strong>PaySecure</strong><small>PAYMENT RECEIPT</small></div></div>
+          <button type="button" className="invoice-close" aria-label="Close receipt" onClick={() => setSelectedInvoice(null)}>×</button>
+        </div>
+        <div className="invoice-modal-body">
+          <span className="invoice-paid-pill"><i aria-hidden="true" /> Payment successful</span>
+          <h2 id="invoice-dialog-title">Payment receipt</h2>
+          <p className="invoice-dialog-date">{new Date(selectedInvoice.created_at).toLocaleString("en-IN", { dateStyle: "long", timeStyle: "short" })}</p>
+          <p className="invoice-dialog-amount">{money.format(Number(selectedInvoice.amount))}</p>
+          <dl className="invoice-details">
+            <div><dt>Reference</dt><dd>{selectedInvoice.reference}</dd></div>
+            <div><dt>Paid by</dt><dd>{user?.username || "Customer"}</dd></div>
+            <div><dt>Payment method</dt><dd>{selectedInvoice.card_mask || "Saved card"}</dd></div>
+            <div><dt>Status</dt><dd>Paid</dd></div>
+          </dl>
+          <p className="invoice-disclaimer">This is a receipt for a simulated payment. No real payment was processed.</p>
+        </div>
+        <div className="invoice-modal-actions">
+          <button type="button" className="button-secondary" onClick={() => setSelectedInvoice(null)}>Close</button>
+          <button type="button" className="button-primary" onClick={() => downloadInvoice(selectedInvoice)}>Download invoice <span aria-hidden="true">↓</span></button>
+        </div>
+      </section>
+    </div>}
   </div>;
+}
+
+function createInvoiceHtml(transaction, user, money) {
+  const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character]);
+  const date = new Date(transaction.created_at).toLocaleString("en-IN", {
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PaySecure receipt ${escapeHtml(transaction.reference)}</title>
+  <style>
+    body{margin:0;padding:40px;background:#f3f6f1;color:#18332d;font:15px Arial,sans-serif}
+    main{max-width:620px;margin:auto;padding:40px;background:#fff;border:1px solid #e3e9e2;border-radius:16px}
+    header{display:flex;align-items:center;gap:12px;padding-bottom:24px;border-bottom:1px solid #e3e9e2}
+    .mark{display:grid;width:42px;height:42px;place-items:center;border-radius:12px;background:#eabf56;color:#123b33;font-size:22px;font-weight:bold}
+    h1{margin:0;font-size:22px} header p,.muted{margin:5px 0 0;color:#718078;font-size:12px;letter-spacing:.08em}
+    .status{margin-top:28px;color:#28734b;font-weight:bold}.amount{margin:14px 0 28px;font-size:36px;font-weight:bold}
+    dl{margin:0} dl div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-top:1px solid #edf0ec}
+    dt{color:#718078}dd{margin:0;text-align:right;font-weight:600}
+    footer{margin-top:30px;padding-top:18px;border-top:1px solid #e3e9e2;color:#718078;font-size:12px;line-height:1.6}
+    @media print{body{padding:0;background:#fff}main{border:0;border-radius:0}}
+  </style>
+</head>
+<body>
+  <main>
+    <header><span class="mark">P</span><div><h1>PaySecure</h1><p>PAYMENT RECEIPT</p></div></header>
+    <p class="status">✓ Payment successful</p>
+    <p class="muted">${escapeHtml(date)}</p>
+    <p class="amount">${escapeHtml(money.format(Number(transaction.amount)))}</p>
+    <dl>
+      <div><dt>Reference</dt><dd>${escapeHtml(transaction.reference)}</dd></div>
+      <div><dt>Paid by</dt><dd>${escapeHtml(user?.username || "Customer")}</dd></div>
+      <div><dt>Payment method</dt><dd>${escapeHtml(transaction.card_mask || "Saved card")}</dd></div>
+      <div><dt>Status</dt><dd>Paid</dd></div>
+    </dl>
+    <footer>This is a receipt for a simulated payment. No real payment was processed.</footer>
+  </main>
+</body>
+</html>`;
 }
 
 function Stat({label, value, note, marker, markerClass}) {

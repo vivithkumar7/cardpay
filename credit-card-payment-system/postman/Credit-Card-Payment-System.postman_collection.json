@@ -211,6 +211,44 @@
       }
     },
     {
+      "name": "Dashboard Summary",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('dashboard summary requires a valid JWT and returns success', function () {",
+                "  pm.response.to.have.status(200);",
+                "});",
+                "pm.test('summary response includes all dashboard metrics', function () {",
+                "  const data = pm.response.json();",
+                "  pm.expect(data).to.have.all.keys('total_transactions', 'total_amount_spent', 'current_month_spending', 'available_credit_limit', 'last_5_transactions');",
+                "  pm.expect(data.total_transactions).to.be.a('number');",
+                "  ['total_amount_spent', 'current_month_spending', 'available_credit_limit'].forEach(function (field) {",
+                "    pm.expect(Number.isFinite(Number(data[field]))).to.eql(true);",
+                "  });",
+                "  pm.expect(data.last_5_transactions).to.be.an('array').and.have.length.at.most(5);",
+                "  data.last_5_transactions.forEach(function (transaction) {",
+                "    pm.expect(transaction).to.have.all.keys('id', 'amount', 'currency', 'status', 'reference', 'failure_reason', 'card_mask', 'created_at', 'updated_at');",
+                "  });",
+                "});"
+              ]
+            }
+          }
+        ],
+        "url": "{{fastapi_url}}/dashboard/summary"
+      }
+    },
+    {
       "name": "Transactions",
       "request": {
         "method": "GET",

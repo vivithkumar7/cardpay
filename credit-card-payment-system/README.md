@@ -201,8 +201,22 @@ Django:
 - GET `/api/admin/export/` (staff/admin only)
 - GET `/api/admin/summary/`
 
+FastAPI verifies the JWT and forwards only the authenticated user ID to Django's
+internal summary endpoint using the shared internal secret. Django queries
+transactions and related cards; the recent-transactions query selects related card
+data and is limited to five results. `total_amount_spent` and
+`current_month_spending` include successful transactions only.
+`available_credit_limit` is the account's configured limit minus successful
+credit-card transactions, floored at zero. Configure limits in Django Admin under
+**User credit profiles**; new profiles default to `0.00`.
+
+The dashboard also lists recent successful transactions as payment receipts.
+Users can view receipt details or download a self-contained HTML receipt; receipts
+are for simulated payments and are not tax invoices.
+
 FastAPI:
 
+- GET `/dashboard/summary` (JWT required; successful transactions count toward spending)
 - POST `/payments/`
 - GET `/health`
 - GET `/version`
@@ -242,9 +256,16 @@ Set:
 - `refresh` after login (the Login request saves both JWTs automatically)
 - `card_id` after adding a card
 
+Use the **Dashboard Summary** request to call FastAPI `GET /dashboard/summary`;
+the request asserts the response fields and that the recent transaction list is
+limited to five entries.
+
 ## Screenshots
 
-The submission screenshots are not checked into this repository yet. Capture the Register, Login, Dashboard, Add Card, Saved Cards, Payment Success, Payment Failure, Transaction History/Filter, Admin Dashboard, Django Admin, and FastAPI Swagger screens into a `screenshots/` directory before final submission.
+The dashboard summary UI screenshot is available at
+[submission/screenshots/dashboard-summary.png](./submission/screenshots/dashboard-summary.png).
+The screenshot uses mocked API data and contains no real account information.
+Other submission screenshots are in `submission/screenshots/`.
 
 ## Database dump
 

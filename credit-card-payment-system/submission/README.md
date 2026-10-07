@@ -6,6 +6,7 @@
 
 - [Sign in](screenshots/login.png)
 - [Customer overview](screenshots/dashboard.png)
+- [Dashboard summary and recent transactions](screenshots/dashboard-summary.png)
 - [Cards](screenshots/cards.png)
 - [Simulated payment success](screenshots/payment-success.png)
 - [Simulated payment failure](screenshots/payment-failure.png)

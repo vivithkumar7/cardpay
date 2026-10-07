@@ -38,6 +38,37 @@ def test_payment_requires_jwt():
     assert response.status_code == 401
     django_request.assert_not_awaited()
 
+
+def test_dashboard_summary_requires_jwt():
+    with patch("app.main.django_request", new=AsyncMock()) as django_request:
+        response = client.get("/dashboard/summary")
+    assert response.status_code == 401
+    django_request.assert_not_awaited()
+
+
+def test_dashboard_summary_forwards_authenticated_user_to_django():
+    summary = {
+        "total_transactions": 2,
+        "total_amount_spent": "20.00",
+        "current_month_spending": "10.00",
+        "available_credit_limit": "80.00",
+        "last_5_transactions": [],
+    }
+    with patch(
+        "app.main.django_request",
+        new=AsyncMock(return_value=summary),
+    ) as django_request:
+        response = client.get("/dashboard/summary", headers=auth_headers(user_id=7))
+
+    assert response.status_code == 200
+    assert response.json() == summary
+    django_request.assert_awaited_once_with(
+        "GET",
+        "/api/internal/transactions/dashboard/summary/",
+        params={"user_id": 7},
+    )
+
+
 def test_payment_user_must_match_jwt():
     with patch("app.main.django_request", new=AsyncMock()) as django_request:
         response = client.post(

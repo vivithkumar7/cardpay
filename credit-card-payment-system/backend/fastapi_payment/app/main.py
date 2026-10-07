@@ -25,7 +25,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["POST"],
+    allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -50,13 +50,19 @@ def authenticate_jwt(authorization: str | None) -> int:
     except (JWTError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid or expired JWT token.")
 
-async def django_request(method: str, path: str, json_data: dict):
+async def django_request(
+    method: str,
+    path: str,
+    json_data: dict | None = None,
+    params: dict | None = None,
+):
     url = f"{DJANGO_INTERNAL_URL.rstrip('/')}{path}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.request(
             method,
             url,
             json=json_data,
+            params=params,
             headers={"X-Internal-Secret": DJANGO_INTERNAL_SECRET},
         )
     if response.status_code >= 400:
@@ -66,6 +72,19 @@ async def django_request(method: str, path: str, json_data: dict):
             detail = response.text
         raise HTTPException(status_code=response.status_code, detail=detail)
     return response.json()
+
+
+@app.get("/dashboard/summary")
+async def dashboard_summary(
+    authorization: str | None = Header(default=None),
+):
+    authenticated_user_id = authenticate_jwt(authorization)
+    return await django_request(
+        "GET",
+        "/api/internal/transactions/dashboard/summary/",
+        params={"user_id": authenticated_user_id},
+    )
+
 
 @app.post("/payments/", response_model=PaymentResponse)
 async def make_payment(

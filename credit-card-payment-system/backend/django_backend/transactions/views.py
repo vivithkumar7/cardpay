@@ -1,13 +1,16 @@
 import csv
 import secrets
 from datetime import datetime
+from decimal import Decimal
+
 from django.conf import settings
 from django.http import HttpResponse
-from django.db.models import Sum, Count
+from django.db.models import Count, Sum
 from django.utils import timezone
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from accounts.models import UserCreditProfile
 from .models import Transaction
 from .serializers import TransactionSerializer
 
@@ -40,6 +43,55 @@ class TransactionListView(generics.ListAPIView):
             qs = qs.filter(created_at__date__lte=to_date)
         return qs
 
+
+class DashboardSummaryView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(_dashboard_summary_data(request.user))
+
+
+def _dashboard_summary_data(user):
+    user_transactions = Transaction.objects.filter(user=user)
+    successful_transactions = user_transactions.filter(
+        status=Transaction.Status.SUCCESS
+    )
+    spending = user_transactions.aggregate(total=Sum("amount"))["total"]
+    if spending is None:
+        spending = Decimal("0.00")
+
+    today = timezone.localdate()
+    month_spending = successful_transactions.filter(
+        created_at__year=today.year,
+        created_at__month=today.month,
+    ).aggregate(total=Sum("amount"))["total"]
+    if month_spending is None:
+        month_spending = Decimal("0.00")
+
+    profile, _ = UserCreditProfile.objects.get_or_create(user=user)
+    credit_spending = successful_transactions.filter(
+        card__card_type="CREDIT"
+    ).aggregate(total=Sum("amount"))["total"]
+    if credit_spending is None:
+        credit_spending = Decimal("0.00")
+    available_credit_limit = max(
+        profile.credit_limit - credit_spending, Decimal("0.00")
+    )
+    last_transactions = user_transactions.select_related("card").order_by(
+        "-created_at", "-pk"
+    )[:5]
+
+    return {
+        "total_transactions": user_transactions.count(),
+        "total_amount_spent": spending,
+        "current_month_spending": month_spending,
+        "available_credit_limit": available_credit_limit,
+        "last_5_transactions": TransactionSerializer(
+            last_transactions, many=True
+        ).data,
+    }
+
+
 class InternalTransactionCreateView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -69,6 +121,25 @@ class InternalTransactionCreateView(APIView):
             reference=reference or f"TX-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
         )
         return Response(TransactionSerializer(tx).data, status=201)
+
+
+class InternalDashboardSummaryView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        if not _has_valid_internal_secret(request):
+            return Response({"detail": "Unauthorized internal request."}, status=401)
+
+        from django.contrib.auth import get_user_model
+
+        user_id = request.query_params.get("user_id")
+        try:
+            user = get_user_model().objects.get(pk=user_id)
+        except (get_user_model().DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "User not found."}, status=404)
+        return Response(_dashboard_summary_data(user))
+
 
 class InternalTransactionUpdateView(APIView):
     authentication_classes = []
