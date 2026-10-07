@@ -98,6 +98,10 @@ describe("application routes", () => {
     expect(screen.getByText("Available credit")).toBeTruthy();
     expect(screen.getAllByText("TX-DASHBOARD-TEST").length).toBeGreaterThan(0);
     expect(screen.getByText("************1111")).toBeTruthy();
+    const quickActions = screen.getByRole("region", { name: "Quick actions" });
+    expect(within(quickActions).getByRole("link", { name: /My Cards/ }).getAttribute("href")).toBe("/cards");
+    expect(within(quickActions).getByRole("link", { name: /Make Payment/ }).getAttribute("href")).toBe("/payment");
+    expect(within(quickActions).getByRole("link", { name: /Transactions/ }).getAttribute("href")).toBe("/transactions");
     const invoices = screen.getByRole("region", { name: "Recent invoices" });
     expect(within(invoices).getByText("TX-DASHBOARD-TEST")).toBeTruthy();
     expect(within(invoices).queryByText("TX-FAILED-NO-INVOICE")).toBeNull();

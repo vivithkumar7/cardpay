@@ -304,10 +304,6 @@ function Dashboard() {
       </div>
       <div className="dashboard-heading-side">
         <p className="dashboard-date">{new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</p>
-        <div className="heading-actions">
-          <Link to="/cards" className="button-secondary">Manage cards</Link>
-          <Link to="/payment" className="button-primary">Make a payment <span aria-hidden="true">↗</span></Link>
-        </div>
       </div>
       <span className="dashboard-orb dashboard-orb-one" aria-hidden="true" />
       <span className="dashboard-orb dashboard-orb-two" aria-hidden="true" />
@@ -318,6 +314,42 @@ function Dashboard() {
       <Stat label="This month" value={money.format(Number(summary.current_month_spending))} note={new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date())} marker="◷" markerClass="bg-emerald-100 text-emerald-800"/>
       <Stat label="Available credit" value={money.format(Number(summary.available_credit_limit))} note={`${cards.filter(card => card.card_type === "CREDIT").length} credit card${cards.filter(card => card.card_type === "CREDIT").length === 1 ? "" : "s"} on file`} marker="↗" markerClass="bg-slate-100 text-slate-800"/>
       <Stat label="Total transactions" value={summary.total_transactions} note={`${pendingTransactions.length} awaiting completion`} marker="#" markerClass="bg-stone-100 text-stone-700"/>
+    </section>
+
+    <section className="dashboard-quick-actions" aria-label="Quick actions">
+      <div className="dashboard-quick-heading">
+        <div>
+          <p className="dashboard-section-label">PICK UP WHERE YOU LEFT OFF</p>
+          <h2>Quick actions</h2>
+        </div>
+        <p>Manage your cards, make a payment, or review your activity.</p>
+      </div>
+      <div className="dashboard-quick-grid">
+        <Link to="/cards" className="dashboard-action-card">
+          <span className="dashboard-action-icon" aria-hidden="true">▤</span>
+          <span className="dashboard-action-copy">
+            <strong>My Cards</strong>
+            <span>Manage your saved payment cards</span>
+          </span>
+          <span className="dashboard-action-arrow" aria-hidden="true">↗</span>
+        </Link>
+        <Link to="/payment" className="dashboard-action-card is-primary">
+          <span className="dashboard-action-icon" aria-hidden="true">₹</span>
+          <span className="dashboard-action-copy">
+            <strong>Make Payment</strong>
+            <span>Pay securely with a saved card</span>
+          </span>
+          <span className="dashboard-action-arrow" aria-hidden="true">↗</span>
+        </Link>
+        <Link to="/transactions" className="dashboard-action-card">
+          <span className="dashboard-action-icon" aria-hidden="true">◷</span>
+          <span className="dashboard-action-copy">
+            <strong>Transactions</strong>
+            <span>View your recent payment activity</span>
+          </span>
+          <span className="dashboard-action-arrow" aria-hidden="true">↗</span>
+        </Link>
+      </div>
     </section>
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.8fr)]">
