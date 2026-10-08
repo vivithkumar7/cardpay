@@ -6,12 +6,21 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from drf_spectacular.utils import extend_schema
 from .serializers import RegisterSerializer, LoginSerializer, TokenResponseSerializer, UserSerializer
+from .notifications import queue_account_email
 
 User = get_user_model()
 
 class RegisterView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = RegisterSerializer
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        queue_account_email(
+            user,
+            "Welcome to PaySecure",
+            "Your PaySecure account was created. If you did not create it, contact support.",
+        )
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -20,6 +29,11 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        queue_account_email(
+            serializer.user,
+            "New PaySecure sign-in",
+            "A sign-in to your PaySecure account was just completed. If this was not you, secure your account.",
+        )
         return Response(serializer.validated_data)
 
 class LogoutView(APIView):

@@ -13,10 +13,10 @@ class CardSerializer(serializers.ModelSerializer):
         model = Card
         fields = (
             "id", "card_type", "card_holder_name", "expiry_month",
-            "expiry_year", "card_number", "cvv", "masked_card_number",
+            "expiry_year", "is_active", "card_number", "cvv", "masked_card_number",
             "last4", "created_at"
         )
-        read_only_fields = ("id", "masked_card_number", "last4", "created_at")
+        read_only_fields = ("id", "is_active", "masked_card_number", "last4", "created_at")
 
     def validate_card_number(self, value):
         value = re.sub(r"[\s-]", "", value)

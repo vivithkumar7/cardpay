@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import axios from "axios";
 import App from "./App";
 import { django, fastapi } from "./api";
 
@@ -43,6 +44,42 @@ describe("application routes", () => {
 
     expect(await screen.findByLabelText("Username")).toBeTruthy();
     expect(localStorage.getItem("access")).toBeNull();
+  });
+
+  it("refreshes an expired access token and retries the original request", async () => {
+    localStorage.setItem("access", "expired-access-token");
+    localStorage.setItem("refresh", "valid-refresh-token");
+    const refreshRequest = vi.spyOn(axios, "post").mockResolvedValue({
+      data: { access: "new-access-token", refresh: "rotated-refresh-token" },
+    });
+    let requestCount = 0;
+    django.defaults.adapter = vi.fn(config => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return Promise.reject({
+          config,
+          response: { config, status: 401, data: { detail: "Token expired." } },
+        });
+      }
+      return Promise.resolve({
+        config,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        data: { username: "demo-user" },
+      });
+    });
+
+    const response = await django.get("/api/auth/me/");
+
+    expect(response.data.username).toBe("demo-user");
+    expect(requestCount).toBe(2);
+    expect(refreshRequest).toHaveBeenCalledWith(
+      "http://localhost:8000/api/auth/refresh/",
+      { refresh: "valid-refresh-token" },
+    );
+    expect(localStorage.getItem("access")).toBe("new-access-token");
+    expect(localStorage.getItem("refresh")).toBe("rotated-refresh-token");
   });
 
   it("renders dashboard metrics and recent transactions from the summary API", async () => {
@@ -94,6 +131,17 @@ describe("application routes", () => {
 
     const dashboardHeading = await screen.findByRole("heading", { level: 1 });
     expect(dashboardHeading.textContent).toContain("Welcome back, demo-user");
+    const themeToggle = screen.getByRole("button", { name: "Toggle color theme" });
+    expect(themeToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(themeToggle.querySelector("[data-theme-icon='moon']")).toBeTruthy();
+    fireEvent.click(themeToggle);
+    expect(document.querySelector(".app-shell").getAttribute("data-theme")).toBe("dark");
+    expect(localStorage.getItem("theme")).toBe("dark");
+    const darkThemeToggle = screen.getByRole("button", { name: "Toggle color theme" });
+    expect(darkThemeToggle.getAttribute("aria-pressed")).toBe("true");
+    expect(darkThemeToggle.querySelector("[data-theme-icon='sun']")).toBeTruthy();
+    fireEvent.click(darkThemeToggle);
+    expect(document.querySelector(".app-shell").getAttribute("data-theme")).toBe("light");
     expect(screen.getByText("Total amount spent")).toBeTruthy();
     expect(screen.getByText("Available credit")).toBeTruthy();
     expect(screen.getAllByText("TX-DASHBOARD-TEST").length).toBeGreaterThan(0);
@@ -151,5 +199,54 @@ describe("application routes", () => {
     render(<MemoryRouter initialEntries={["/"]}><App /></MemoryRouter>);
 
     expect(screen.getByRole("status", { name: "Loading dashboard" })).toBeTruthy();
+  });
+
+  it("downloads the selected monthly statement as a PDF", async () => {
+    localStorage.setItem("access", "statement-test-token");
+    vi.spyOn(django, "get").mockImplementation(url => {
+      if (url === "/api/auth/me/") return Promise.resolve({ data: { username: "statement-user" } });
+      if (url === "/api/cards/") return Promise.resolve({ data: [] });
+      if (url === "/api/transactions/") return Promise.resolve({ data: [] });
+      if (url === "/api/transactions/statement/") return Promise.resolve({ data: new Blob(["%PDF"]) });
+      return Promise.resolve({ data: [] });
+    });
+    vi.spyOn(fastapi, "get").mockResolvedValue({
+      data: {
+        total_transactions: 0,
+        total_amount_spent: "0.00",
+        current_month_spending: "0.00",
+        available_credit_limit: "0.00",
+        last_5_transactions: [],
+      },
+    });
+    const createObjectURL = vi.fn(() => "blob:statement");
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
+    const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    render(<MemoryRouter initialEntries={["/"]}><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Download PDF" }));
+
+    const today = new Date();
+    const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    expect(django.get).toHaveBeenCalledWith("/api/transactions/statement/", {
+      params: { month },
+      responseType: "blob",
+    });
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledOnce();
+      expect(downloadClick).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("restores the saved theme across app remounts", () => {
+    localStorage.setItem("theme", "dark");
+    const firstRender = render(<MemoryRouter initialEntries={["/login"]}><App /></MemoryRouter>);
+
+    expect(document.querySelector(".app-shell").getAttribute("data-theme")).toBe("dark");
+
+    firstRender.unmount();
+    render(<MemoryRouter initialEntries={["/register"]}><App /></MemoryRouter>);
+
+    expect(document.querySelector(".app-shell").getAttribute("data-theme")).toBe("dark");
   });
 });

@@ -171,6 +171,12 @@ Services:
 - Django: [http://localhost:8000](http://localhost:8000)
 - FastAPI: [http://localhost:8001/docs](http://localhost:8001/docs)
 - MySQL: `localhost:3306`
+- Mailpit inbox: [http://localhost:8025](http://localhost:8025) (SMTP on `localhost:1025`)
+
+Docker routes Django notification email to Mailpit by default. Review successful
+card block/unblock, credit-limit update, and card-removal actions under Django
+Admin's **Admin logs** section; audit records are stored in `admin_logs` and
+contain only masked card numbers.
 
 ## Demo payment simulation
 
@@ -227,11 +233,54 @@ FastAPI:
 | Table | Important fields | Sensitive data policy |
 | --- | --- | --- |
 | Django users | `id`, `username`, `email`, `password`, `is_staff` | `password` contains a Django password hash, never the plaintext password. |
-| Cards | `id`, `user_id`, `card_type`, `masked_card_number`, `last4`, `card_holder_name`, `expiry_month`, `expiry_year` | No full card number or CVV columns are stored. |
+| Cards | `id`, `user_id`, `card_type`, `masked_card_number`, `last4`, `card_holder_name`, `expiry_month`, `expiry_year`, `is_active` | No full card number or CVV columns are stored. |
 | Transactions | `id`, `user_id`, `card_id`, `amount`, `currency`, `status`, `reference`, `failure_reason`, timestamps | References the saved card; payment is simulated and has no gateway credentials. |
 | Admin logs | `id`, `admin_user_id`, `action`, `details`, `created_at` | Administrative audit records; no card PAN or CVV fields. |
 
 The Django migrations define the authoritative schema. MySQL is used for normal runs; `DJANGO_TEST_SQLITE=1` is available for isolated tests and local live demos.
+
+## Sprint feature scope
+
+### Email notifications
+
+- Send the account holder an email when:
+  - An account is registered or a successful sign-in occurs.
+  - A card is added, removed, blocked, or unblocked, or the account credit limit changes.
+  - A transaction is finalized as successful or failed.
+  - A finalized transaction amount is greater than ₹5,000. This high-value alert applies to both successful and failed attempts.
+  - Available credit crosses from at least 10% to below 10% of the credit limit after a successful credit-card transaction or credit-limit change. Available credit follows the dashboard calculation: limit less all successful credit-card transaction amounts.
+- Include the transaction reference and masked card details when relevant; never include full card numbers or CVVs. Explicitly log and skip delivery when the account has no email address.
+- Queue email work after database commit. Log delivery failures without undoing an already committed payment or card change.
+
+The sample `.env.example` uses Django's console email backend, so local notifications are written to the Django process output. For SMTP delivery, set `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend` and configure `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, and `DEFAULT_FROM_EMAIL` in the local `.env`. Keep provider credentials out of source control.
+
+### Dashboard appearance
+
+- Manage the selected light/dark theme using React Context and a dashboard toggle.
+- Switch colors smoothly (220 ms); respect `prefers-reduced-motion` by disabling animation.
+- Persist the non-sensitive `theme` preference in browser local storage across reloads, app remounts, and sign-outs.
+- Keep the toggle keyboard-operable with visible focus and an accessible name/state (`aria-pressed`); keep it visible on narrow screens.
+- Apply readable palettes to dashboard surfaces, navigation, forms, tables, dialogs, and native controls in both themes.
+
+### Monthly PDF statements
+
+- Provide an authenticated download endpoint: `GET /api/transactions/statement/?month=YYYY-MM`.
+- Validate the month; reject malformed values and future periods. Include only the signed-in user's transactions in the selected local-time month.
+- Generate a professional PDF with account holder, covered dates and generation time; successful-spend total; transaction, success, failure, pending, and payment-method counts; and a dated transaction table.
+- Include each transaction's reference, status, amount/currency, and card type with a masked number derived from the final four digits. Never put full card numbers or security codes in the PDF.
+- Repeat table headings across pages and include page numbers, a branded header, and a privacy footer. Download as `paysecure-statement-YYYY-MM.pdf`.
+- Dashboard users can select a month and download the statement from the **Monthly statement** panel.
+
+### Staff card management
+
+- Restrict card-management and card-activity endpoints to authenticated Django staff users; deny unauthenticated and non-staff users.
+- Let staff search `GET /api/admin/cards/?search={term}` by customer username/email, cardholder name, or last four digits, and review the stored non-sensitive card details.
+- Let staff block/unblock a card and update the customer's account credit limit through `PATCH /api/admin/cards/{id}/`.
+- Prevent blocked cards from starting a payment; retain transaction history and reject card removal when transactions reference it.
+- Expose per-card transaction activity at `GET /api/admin/cards/{id}/activity/`, paginated to 25 by default and capped at 100 per page.
+- Never store or return full card numbers or CVVs. Surface permission and validation failures to the administrator.
+
+Apply the card-status migration with `python manage.py migrate` before starting the updated application.
 
 ## Admin
 

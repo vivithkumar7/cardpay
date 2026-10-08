@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AUTH_EXPIRED_EVENT, django, fastapi } from "./api";
+import { ThemeProvider, useTheme } from "./ThemeContext";
 
 function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { theme, toggleTheme } = useTheme();
   const [user, setUser] = useState(null);
   const isAuthPage = location.pathname === "/login" || location.pathname === "/register";
   const isAuthenticated = Boolean(localStorage.getItem("access") || sessionStorage.getItem("access"));
@@ -34,13 +36,15 @@ function Layout({ children }) {
     if (refresh) {
       try { await django.post("/api/auth/logout/", { refresh }); } catch {}
     }
-    localStorage.clear();
-    sessionStorage.clear();
+    localStorage.removeItem("access");
+    localStorage.removeItem("refresh");
+    sessionStorage.removeItem("access");
+    sessionStorage.removeItem("refresh");
     navigate("/login");
   }
 
   return (
-    <div className={`app-shell min-h-screen ${isAuthPage ? "auth-shell bg-[#030305]" : "bg-[#0b0d0b]"}`}>
+    <div className={`app-shell min-h-screen ${isAuthPage ? "auth-shell bg-[#030305]" : "bg-[#0b0d0b]"}`} data-theme={theme}>
       {!isAuthPage && <nav className="app-nav">
         <Link to="/" className="brand-lockup"><span className="brand-mark" aria-hidden="true">P</span><span>PaySecure</span></Link>
         <div className="nav-links">
@@ -51,6 +55,25 @@ function Layout({ children }) {
               <NavLink to="/payment" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Payment</NavLink>
               <NavLink to="/transactions" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Activity</NavLink>
               {user?.is_staff && <NavLink to="/admin-dashboard" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Admin</NavLink>}
+              <button
+                type="button"
+                className="theme-toggle"
+                onClick={toggleTheme}
+                aria-label="Toggle color theme"
+                aria-pressed={theme === "dark"}
+                title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              >
+                {theme === "dark" ? (
+                  <svg data-theme-icon="sun" aria-hidden="true" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+                  </svg>
+                ) : (
+                  <svg data-theme-icon="moon" aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z" />
+                  </svg>
+                )}
+              </button>
               <span className="nav-user">{user?.username || "Account"}</span>
               <button onClick={logout} className="nav-logout" aria-label="Log out" title="Log out">↗</button>
             </>
@@ -351,6 +374,7 @@ function Dashboard() {
         </Link>
       </div>
     </section>
+    <StatementDownload />
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.8fr)]">
       <article className="dashboard-panel dashboard-activity rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -562,6 +586,53 @@ function StatusBadge({status}) {
   return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${styles[status] || styles.PENDING}`}>{status}</span>;
 }
 
+function StatementDownload() {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [month, setMonth] = useState(currentMonth);
+  const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+
+  async function downloadStatement() {
+    setError("");
+    setDownloading(true);
+    try {
+      const response = await django.get("/api/transactions/statement/", {
+        params: { month },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `paysecure-statement-${month}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError("The statement could not be generated. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return <section className="statement-download" aria-label="Monthly statement">
+    <div>
+      <p className="dashboard-section-label">ACCOUNT RECORDS</p>
+      <h2>Monthly statement</h2>
+      <p>Download a PDF with your spending summary and transaction activity.</p>
+    </div>
+    <div className="statement-controls">
+      <label htmlFor="statement-month">Statement month</label>
+      <input id="statement-month" type="month" max={currentMonth} value={month} onChange={event => setMonth(event.target.value)} />
+      <button type="button" className="button-primary" onClick={downloadStatement} disabled={downloading || !month}>
+        {downloading ? "Preparing…" : "Download PDF"}
+      </button>
+    </div>
+    {error && <p role="alert" className="statement-error">{error}</p>}
+  </section>;
+}
+
 function Cards() {
   const [cards,setCards]=useState([]); const [error,setError]=useState("");
   const [form,setForm]=useState({card_type:"CREDIT",card_holder_name:"",expiry_month:12,expiry_year:2030,card_number:"",cvv:""});
@@ -569,7 +640,7 @@ function Cards() {
   async function load(){ const r=await django.get("/api/cards/"); setCards(r.data); }
   useEffect(()=>{load()},[]);
   async function submit(e){e.preventDefault();setError("");try{await django.post("/api/cards/",form);setForm({...form,card_number:"",cvv:""});load();}catch(err){setError(JSON.stringify(err.response?.data||"Failed"));}}
-  async function remove(id){await django.delete(`/api/cards/${id}/`);load();}
+  async function remove(id){setError("");try{await django.delete(`/api/cards/${id}/`);await load();}catch(err){setError(err.response?.data?.detail||"Could not remove this card.");}}
   return <div className="page-shell cards-page">
     <header className="page-heading">
       <div><p className="eyebrow">PAYMENT METHODS</p><h1>Your cards</h1><p className="page-subtitle">Keep your payment methods together and ready to use.</p></div>
@@ -600,7 +671,7 @@ function Cards() {
     </section>
     <section className="saved-card-section">
       <div className="panel-heading"><div><p className="eyebrow">IN YOUR WALLET</p><h2>Saved cards</h2></div><span className="panel-index">{String(cards.length).padStart(2, "0")}</span></div>
-      <div className="saved-card-list">{cards.map(c=><article key={c.id} className="saved-card-item"><div className="saved-card-icon" aria-hidden="true">▤</div><div className="saved-card-info"><span className="card-kind">{c.card_type} CARD</span><strong>{c.masked_card_number}</strong><small>{c.card_holder_name} · {String(c.expiry_month).padStart(2, "0")}/{c.expiry_year}</small></div><button onClick={()=>remove(c.id)} className="icon-delete" aria-label={`Delete card ending ${c.last4}`} title="Delete card">×</button></article>)}</div>
+      <div className="saved-card-list">{cards.map(c=><article key={c.id} className="saved-card-item"><div className="saved-card-icon" aria-hidden="true">▤</div><div className="saved-card-info"><span className="card-kind">{c.card_type} CARD · {c.is_active === false ? "INACTIVE" : "ACTIVE"}</span><strong>{c.masked_card_number}</strong><small>{c.card_holder_name} · {String(c.expiry_month).padStart(2, "0")}/{c.expiry_year}</small></div><button onClick={()=>remove(c.id)} className="icon-delete" aria-label={`Delete card ending ${c.last4}`} title="Delete card">×</button></article>)}</div>
       {!cards.length && <div className="empty-state"><span className="empty-mark" aria-hidden="true">▤</span><h3>Your wallet is ready</h3><p>Your saved payment methods will appear here.</p></div>}
     </section>
     </div>
@@ -609,7 +680,8 @@ function Cards() {
 
 function Payment() {
   const [cards,setCards]=useState([]); const [cardId,setCardId]=useState(""); const [amount,setAmount]=useState(""); const [result,setResult]=useState(null); const [error,setError]=useState("");
-  useEffect(()=>{django.get("/api/cards/").then(r=>{setCards(r.data);if(r.data[0])setCardId(r.data[0].id)})},[]);
+  const activeCards = cards.filter(card => card.is_active !== false);
+  useEffect(()=>{django.get("/api/cards/").then(r=>{const available=r.data.filter(card=>card.is_active !== false);setCards(r.data);if(available[0])setCardId(available[0].id)})},[]);
   async function submit(e){e.preventDefault();setError("");setResult(null);try{const me=await django.get("/api/auth/me/");const token=localStorage.getItem("access")||sessionStorage.getItem("access");const r=await fastapi.post("/payments/",{user_id:me.data.id,card_id:Number(cardId),amount:amount,currency:"INR"},{headers:{Authorization:`Bearer ${token}`}});setResult(r.data)}catch(err){setError(JSON.stringify(err.response?.data||"Payment failed"));}}
   const selectedCard = cards.find(card => String(card.id) === String(cardId));
   return <div className="page-shell payment-page">
@@ -620,12 +692,12 @@ function Payment() {
         {error&&<div role="alert" className="form-alert">{error}</div>}
         {result&&<div role="status" className={`payment-result ${result.status === "SUCCESS" ? "is-success" : "is-failed"}`}><span className="result-symbol" aria-hidden="true">{result.status === "SUCCESS" ? "✓" : "!"}</span><div><strong>{result.status === "SUCCESS" ? "Payment complete" : "Payment not completed"}</strong><p>{result.message}</p><small>Reference {result.reference}</small></div></div>}
         <form onSubmit={submit} className="form-stack payment-form">
-          <label className="field-label">Pay with<select className="field-control" value={cardId} onChange={e=>setCardId(e.target.value)} required>{cards.map(c=><option key={c.id} value={c.id}>{c.card_type} · {c.masked_card_number}</option>)}</select></label>
+          <label className="field-label">Pay with<select className="field-control" value={cardId} onChange={e=>setCardId(e.target.value)} required>{activeCards.map(c=><option key={c.id} value={c.id}>{c.card_type} · {c.masked_card_number}</option>)}</select></label>
           <label className="field-label">Amount<input className="field-control amount-control" type="number" step="0.01" min="0.01" placeholder="0.00" value={amount} onChange={e=>setAmount(e.target.value)} required/><span className="input-currency">INR</span></label>
           <div className="payment-summary"><span>Payment method</span><strong>{selectedCard ? `${selectedCard.card_type} ending ${selectedCard.last4}` : "No card selected"}</strong><span>Processing</span><strong>Instant</strong></div>
-          <button disabled={!cards.length} className="button-primary form-submit pay-button">Pay securely <span aria-hidden="true">↗</span></button>
+          <button disabled={!activeCards.length} className="button-primary form-submit pay-button">Pay securely <span aria-hidden="true">↗</span></button>
         </form>
-        {!cards.length && <div className="empty-inline">No cards saved yet. <Link to="/cards">Add a card</Link> to continue.</div>}
+        {!activeCards.length && <div className="empty-inline">{cards.length ? "Your saved cards are inactive. " : "No cards saved yet. "}<Link to="/cards">Manage cards</Link> to continue.</div>}
       </section>
       <aside className="payment-aside">
         <div className="checkout-card"><span className="checkout-overline">TOTAL DUE</span><p className="checkout-amount"><span>₹</span>{amount ? Number(amount).toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2}) : "0.00"}</p><div className="checkout-rule"/><div className="checkout-method"><span className="mini-card-icon" aria-hidden="true">▤</span><div><small>PAYING WITH</small><strong>{selectedCard ? `•••• ${selectedCard.last4}` : "Select a card"}</strong></div></div><div className="checkout-stamp">PS <span>PAYSECURE</span></div></div>
@@ -667,13 +739,148 @@ function Transactions() {
 
 function AdminDashboard() {
   const [data,setData]=useState(null);
-  useEffect(()=>{django.get("/api/admin/summary/").then(r=>setData(r.data))},[]);
-  if(!data)return <div>Loading...</div>;
-  return <div><h1 className="text-3xl font-bold mb-6">Admin Dashboard</h1><div className="grid md:grid-cols-4 gap-4">{Object.entries({Transactions:data.total_transactions,Successful:data.successful,Failed:data.failed,Pending:data.pending}).map(([label,value])=><Stat key={label} label={label} value={value} note="All time" marker={label === "Transactions" ? "↗" : label === "Successful" ? "✓" : label === "Failed" ? "!" : "…"} markerClass={label === "Successful" ? "bg-emerald-100 text-emerald-800" : label === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-100 text-amber-900"}/>)}</div><div className="bg-white p-6 rounded-2xl shadow mt-6"><h2 className="font-bold">Total Amount</h2><div className="text-3xl mt-2">₹{data.total_amount}</div><a className="inline-block mt-4 text-cyan-700" href={`${import.meta.env.VITE_DJANGO_URL||"http://localhost:8000"}/admin/`}>Open Django Admin</a></div><section className="bg-white p-6 rounded-2xl shadow mt-6"><h2 className="font-bold">Today&apos;s Payments <span className="font-normal text-slate-500">{data.daily.date}</span></h2><dl className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">{[["Payments",data.daily.total_transactions],["Successful",data.daily.successful],["Failed",data.daily.failed],["Pending",data.daily.pending],["Amount",`₹${data.daily.total_amount}`]].map(([label,value])=><div key={label}><dt className="text-slate-500">{label}</dt><dd className="text-xl font-bold mt-1">{value}</dd></div>)}</dl></section></div>;
+  const [cards,setCards]=useState([]);
+  const [error,setError]=useState("");
+  const [accessDenied,setAccessDenied]=useState(false);
+  const [busyCard,setBusyCard]=useState(null);
+  const [cardSearch,setCardSearch]=useState("");
+  const [expandedCardId,setExpandedCardId]=useState(null);
+  const [cardActivity,setCardActivity]=useState(null);
+  const [activityLoading,setActivityLoading]=useState(false);
+  const [activityError,setActivityError]=useState("");
+
+  async function load(searchTerm = cardSearch) {
+    try {
+      const [summaryResponse, cardResponse] = await Promise.all([
+        django.get("/api/admin/summary/"),
+        django.get("/api/admin/cards/", {
+          params: searchTerm.trim() ? { search: searchTerm.trim() } : {},
+        }),
+      ]);
+      setData(summaryResponse.data);
+      setCards(cardResponse.data);
+      setAccessDenied(false);
+    } catch (requestError) {
+      if (requestError.response?.status === 403) setAccessDenied(true);
+      else setError("Admin data could not be loaded. Please try again.");
+    }
+  }
+
+  useEffect(()=>{
+    const timer = window.setTimeout(() => load(cardSearch), 250);
+    return () => window.clearTimeout(timer);
+  },[cardSearch]);
+
+  async function updateCard(cardId, updates) {
+    setBusyCard(cardId);
+    setError("");
+    try {
+      await django.patch(`/api/admin/cards/${cardId}/`, updates);
+      await load();
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || "Card could not be updated.");
+    } finally {
+      setBusyCard(null);
+    }
+  }
+
+  async function removeCard(card) {
+    setBusyCard(card.id);
+    setError("");
+    try {
+      await django.delete(`/api/admin/cards/${card.id}/`);
+      await load();
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || "Card could not be removed.");
+    } finally {
+      setBusyCard(null);
+    }
+  }
+
+  async function viewCardActivity(card) {
+    if (expandedCardId === card.id) {
+      setExpandedCardId(null);
+      return;
+    }
+    setExpandedCardId(card.id);
+    setCardActivity(null);
+    setActivityError("");
+    setActivityLoading(true);
+    try {
+      const response = await django.get(`/api/admin/cards/${card.id}/activity/`);
+      setCardActivity(response.data);
+    } catch (requestError) {
+      setActivityError(
+        requestError.response?.data?.detail || "Card activity could not be loaded."
+      );
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+
+  async function loadMoreCardActivity() {
+    if (!cardActivity?.next) return;
+    setActivityLoading(true);
+    setActivityError("");
+    try {
+      const response = await django.get(cardActivity.next);
+      setCardActivity(current => ({
+        ...response.data,
+        results: [...(current?.results || []), ...response.data.results],
+      }));
+    } catch (requestError) {
+      setActivityError(
+        requestError.response?.data?.detail || "More card activity could not be loaded."
+      );
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+
+  if (accessDenied) return <div role="alert" className="page-shell"><h1>Staff access required</h1><p>Your account is not authorized to manage cards.</p></div>;
+  if (!data && !error) return <div role="status">Loading admin dashboard…</div>;
+  if (!data) return <div role="alert" className="page-shell">{error}</div>;
+
+  return <div className="page-shell admin-page">
+    <header className="page-heading"><div><p className="eyebrow">OPERATIONS</p><h1>Admin dashboard</h1><p className="page-subtitle">Review payments and manage saved customer cards.</p></div></header>
+    {error && <p role="alert" className="form-alert">{error}</p>}
+    <div className="grid gap-4 md:grid-cols-4">{Object.entries({Transactions:data.total_transactions,Successful:data.successful,Failed:data.failed,Pending:data.pending}).map(([label,value])=><Stat key={label} label={label} value={value} note="All time" marker={label === "Transactions" ? "↗" : label === "Successful" ? "✓" : label === "Failed" ? "!" : "…"} markerClass={label === "Successful" ? "bg-emerald-100 text-emerald-800" : label === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-100 text-amber-900"}/>)}</div>
+    <section className="admin-summary-grid">
+      <article className="surface-panel"><h2>Total amount processed</h2><p className="admin-total">₹{data.total_amount}</p></article>
+      <article className="surface-panel"><h2>Today&apos;s payments · {data.daily.date}</h2><dl className="admin-daily">{[["Payments",data.daily.total_transactions],["Successful",data.daily.successful],["Failed",data.daily.failed],["Pending",data.daily.pending],["Amount",`₹${data.daily.total_amount}`]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></article>
+    </section>
+    <section className="transactions-panel admin-cards-panel" aria-labelledby="admin-cards-title">
+      <header className="admin-cards-heading"><div><p className="eyebrow">CUSTOMER ACCOUNTS</p><h2 id="admin-cards-title">Card management</h2></div><a className="button-secondary" href={`${import.meta.env.VITE_DJANGO_URL||"http://localhost:8000"}/admin/`}>Open Django Admin</a></header>
+      <div className="admin-card-search"><label htmlFor="admin-card-search">Search by customer, email, cardholder, or last four digits</label><input id="admin-card-search" type="search" value={cardSearch} onChange={event=>setCardSearch(event.target.value)} placeholder="Search cards"/></div>
+      <div className="table-scroll"><table className="transactions-table"><thead><tr><th>Customer</th><th>Card</th><th>Status</th><th>Account credit limit</th><th>Actions</th></tr></thead>
+        <tbody>{cards.map(card=><React.Fragment key={card.id}>
+          <tr>
+            <td><strong>{card.username}</strong><br/><small>{card.email || "No email on file"}</small></td>
+            <td>{card.card_type} ···· {card.last4}<br/><small>{card.card_holder_name}</small></td>
+            <td>{card.is_active ? "Active" : "Inactive"}</td>
+            <td><form className="admin-limit-form" onSubmit={event=>{event.preventDefault();const limit=new FormData(event.currentTarget).get("credit_limit");updateCard(card.id,{credit_limit:limit});}}><label className="sr-only" htmlFor={`credit-limit-${card.id}`}>Credit limit for {card.username}</label><input id={`credit-limit-${card.id}`} name="credit_limit" type="number" min="0" step="0.01" defaultValue={card.account_credit_limit} required/><button type="submit" disabled={busyCard===card.id}>Save limit</button></form></td>
+            <td><div className="admin-card-actions"><button type="button" disabled={busyCard===card.id} onClick={()=>updateCard(card.id,{is_active:!card.is_active})}>{card.is_active ? "Block card" : "Unblock card"}</button><button type="button" className="danger-button" disabled={busyCard===card.id} onClick={()=>removeCard(card)}>Remove</button><button type="button" aria-expanded={expandedCardId===card.id} onClick={()=>viewCardActivity(card)}>{expandedCardId===card.id ? "Hide details" : "View details & activity"}</button></div></td>
+          </tr>
+          {expandedCardId===card.id && <tr><td colSpan="5" className="admin-card-details-cell">
+            <section className="admin-card-details" aria-label={`Card details and activity for ${card.username}`}>
+              <h3>Stored card details</h3>
+              <dl><div><dt>Card ID</dt><dd>{card.id}</dd></div><div><dt>Cardholder</dt><dd>{card.card_holder_name}</dd></div><div><dt>Type</dt><dd>{card.card_type}</dd></div><div><dt>Number</dt><dd>{card.masked_card_number}</dd></div><div><dt>Expires</dt><dd>{String(card.expiry_month).padStart(2,"0")}/{card.expiry_year}</dd></div><div><dt>Added</dt><dd>{new Date(card.created_at).toLocaleString()}</dd></div><div><dt>Account credit limit</dt><dd>₹{card.account_credit_limit}</dd></div><div><dt>Status</dt><dd>{card.is_active ? "Active" : "Blocked"}</dd></div></dl>
+              <h3>Card activity</h3>
+              {activityLoading && <p role="status">Loading card activity…</p>}
+              {activityError && <p role="alert" className="statement-error">{activityError}</p>}
+              {cardActivity?.results?.length ? <div className="table-scroll"><table className="transactions-table"><thead><tr><th>Reference</th><th>Amount</th><th>Status</th><th>Reason</th><th>Date</th></tr></thead><tbody>{cardActivity.results.map(activity=><tr key={activity.id}><td>{activity.reference}</td><td>{activity.currency} {activity.amount}</td><td>{activity.status}</td><td>{activity.failure_reason || "—"}</td><td>{new Date(activity.created_at).toLocaleString()}</td></tr>)}</tbody></table></div> : !activityLoading && !activityError && <p className="admin-empty">No activity recorded for this card.</p>}
+              {cardActivity?.next && <button type="button" className="button-secondary admin-activity-more" onClick={loadMoreCardActivity} disabled={activityLoading}>Load more activity</button>}
+              <p className="admin-data-safety">Sensitive data is protected: full card numbers and CVVs are never stored or shown.</p>
+            </section>
+          </td></tr>}
+        </React.Fragment>)}</tbody></table></div>
+      {!cards.length && <p className="admin-empty">{cardSearch ? "No cards match this search." : "There are no saved cards to manage."}</p>}
+    </section>
+  </div>;
 }
 
 export default function App() {
-  return <Layout><Routes>
+  return <ThemeProvider><Layout><Routes>
     <Route path="/login" element={<Login/>}/>
     <Route path="/register" element={<Register/>}/>
     <Route path="/" element={<Protected><Dashboard/></Protected>}/>
@@ -681,5 +888,5 @@ export default function App() {
     <Route path="/payment" element={<Protected><Payment/></Protected>}/>
     <Route path="/transactions" element={<Protected><Transactions/></Protected>}/>
     <Route path="/admin-dashboard" element={<Protected><AdminDashboard/></Protected>}/>
-  </Routes></Layout>
+  </Routes></Layout></ThemeProvider>
 }

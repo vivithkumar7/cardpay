@@ -70,7 +70,7 @@ async def django_request(
     if response.status_code >= 400:
         try:
             detail = response.json()
-        except Exception:
+        except ValueError:
             detail = response.text
         raise HTTPException(status_code=response.status_code, detail=detail)
     return response.json()

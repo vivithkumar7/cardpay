@@ -11,6 +11,8 @@ from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from accounts.models import UserCreditProfile
+from accounts.notifications import queue_account_email
+from .credit import available_credit_for, notify_if_credit_fell_below_threshold
 from .models import Transaction
 from .serializers import TransactionSerializer
 
@@ -69,14 +71,7 @@ def _dashboard_summary_data(user):
         month_spending = Decimal("0.00")
 
     profile, _ = UserCreditProfile.objects.get_or_create(user=user)
-    credit_spending = successful_transactions.filter(
-        card__card_type="CREDIT"
-    ).aggregate(total=Sum("amount"))["total"]
-    if credit_spending is None:
-        credit_spending = Decimal("0.00")
-    available_credit_limit = max(
-        profile.credit_limit - credit_spending, Decimal("0.00")
-    )
+    available_credit_limit = available_credit_for(user, profile.credit_limit)
     last_transactions = user_transactions.select_related("card").order_by(
         "-created_at", "-pk"
     )[:5]
@@ -111,6 +106,8 @@ class InternalTransactionCreateView(APIView):
         try:
             user = User.objects.get(id=user_id)
             card = Card.objects.get(id=card_id, user=user)
+            if not card.is_active:
+                return Response({"detail": "This card is inactive."}, status=409)
             if float(amount) <= 0:
                 raise ValueError()
         except Exception:
@@ -157,6 +154,9 @@ class InternalTransactionUpdateView(APIView):
         if status_value not in final_statuses:
             return Response({"detail": "Status must be SUCCESS or FAILED."}, status=400)
 
+        profile, _ = UserCreditProfile.objects.get_or_create(user=tx.user)
+        previous_limit = profile.credit_limit
+        previous_available = available_credit_for(tx.user, previous_limit)
         updated = Transaction.objects.filter(
             pk=tx.pk,
             status=Transaction.Status.PENDING,
@@ -168,6 +168,31 @@ class InternalTransactionUpdateView(APIView):
         if not updated:
             return Response({"detail": "Only pending transactions can be finalized."}, status=409)
         tx.refresh_from_db()
+        if status_value == Transaction.Status.SUCCESS and tx.card.card_type == "CREDIT":
+            notify_if_credit_fell_below_threshold(
+                tx.user,
+                previous_available,
+                previous_limit,
+                available_credit_for(tx.user, previous_limit),
+                previous_limit,
+            )
+        queue_account_email(
+            tx.user,
+            (
+                f"High-value payment {tx.status.lower()}"
+                if tx.amount > Decimal("5000.00")
+                else f"Payment {tx.status.lower()}"
+            ),
+            (
+                f"Payment {tx.reference} for {tx.currency} {tx.amount} was "
+                f"{tx.status.lower()}. Card ending in {tx.card.last4}."
+                + (
+                    " This transaction exceeded the ₹5,000 alert threshold."
+                    if tx.amount > Decimal("5000.00")
+                    else ""
+                )
+            ),
+        )
         return Response(TransactionSerializer(tx).data)
 
 class TransactionExportView(APIView):

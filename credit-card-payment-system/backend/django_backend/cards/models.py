@@ -13,6 +13,7 @@ class Card(models.Model):
     card_holder_name = models.CharField(max_length=100)
     expiry_month = models.PositiveSmallIntegerField()
     expiry_year = models.PositiveSmallIntegerField()
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

@@ -1,7 +1,9 @@
 from django.contrib.auth import get_user_model
+from django.core import mail
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.test import override_settings
 
 User = get_user_model()
 
@@ -52,3 +54,27 @@ class AuthTests(APITestCase):
 
         self.assertEqual(logout.status_code, status.HTTP_200_OK)
         self.assertEqual(refreshed.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="PaySecure <no-reply@example.com>",
+    )
+    def test_successful_login_queues_an_account_security_email(self):
+        mail.outbox.clear()
+        user = User.objects.create_user(
+            username="emailuser",
+            email="emailuser@example.com",
+            password="StrongPass123!",
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/auth/login/",
+                {"username": "emailuser", "password": "StrongPass123!"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["emailuser@example.com"])
+        self.assertIn("sign-in", mail.outbox[0].subject.lower())

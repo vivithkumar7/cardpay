@@ -9,6 +9,7 @@ class AdminLog(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        db_table = "admin_logs"
 
     def __str__(self):
         return f"{self.action} - {self.created_at}"
