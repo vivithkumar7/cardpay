@@ -365,7 +365,9 @@ class InternalTransactionCreateView(APIView):
                 return Response({"detail": "This card is inactive."}, status=409)
             amount = Decimal(str(amount))
             if (
-                amount <= 0
+                not amount.is_finite()
+                or amount <= 0
+                or amount.as_tuple().exponent < -2
                 or not isinstance(device_id, str)
                 or len(device_id) > 128
                 or not isinstance(source_ip, str)

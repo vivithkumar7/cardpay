@@ -54,4 +54,6 @@ class CardSerializer(serializers.ModelSerializer):
         validated_data["user"] = self.context["request"].user
         validated_data["last4"] = card_number[-4:]
         validated_data["masked_card_number"] = "*" * (len(card_number) - 4) + card_number[-4:]
+        if len(validated_data["masked_card_number"]) != 19:
+            validated_data["masked_card_number"] = f"{'*' * 12}{card_number[-4:]}"
         return Card.objects.create(**validated_data)
