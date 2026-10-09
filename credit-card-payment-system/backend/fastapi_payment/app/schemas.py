@@ -8,6 +8,15 @@ class PaymentRequest(BaseModel):
     user_id: int = Field(gt=0)
     card_id: int = Field(gt=0)
     amount: condecimal(gt=Decimal("0.01"), max_digits=12, decimal_places=2)
+    category: Literal[
+        "FOOD",
+        "SHOPPING",
+        "TRAVEL",
+        "BILLS",
+        "HEALTHCARE",
+        "ENTERTAINMENT",
+        "OTHER",
+    ] = "OTHER"
     currency: Literal["INR"] = "INR"
 
 
@@ -16,6 +25,7 @@ class PaymentResponse(BaseModel):
     status: str
     amount: Decimal
     currency: str
+    fraud_status: Literal["CLEAR", "FLAGGED"]
     message: str
 
 
@@ -27,6 +37,7 @@ class TransactionSummary(BaseModel):
                 "amount": "125.50",
                 "currency": "INR",
                 "status": "SUCCESS",
+                "fraud_status": "CLEAR",
                 "reference": "TX-20261007-001",
                 "failure_reason": "",
                 "card_mask": "************4242",
@@ -42,6 +53,7 @@ class TransactionSummary(BaseModel):
     )
     currency: str
     status: str
+    fraud_status: Literal["CLEAR", "FLAGGED"] = "CLEAR"
     reference: str
     failure_reason: str
     card_mask: str
@@ -62,6 +74,7 @@ class DashboardSummary(BaseModel):
                     "amount": "125.50",
                     "currency": "INR",
                     "status": "SUCCESS",
+                    "fraud_status": "CLEAR",
                     "reference": "TX-20261007-001",
                     "failure_reason": "",
                     "card_mask": "************4242",

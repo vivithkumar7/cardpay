@@ -2,7 +2,16 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+env_file = next(
+    (
+        parent / ".env"
+        for parent in Path(__file__).resolve().parents
+        if (parent / ".env").is_file()
+    ),
+    None,
+)
+if env_file is not None:
+    load_dotenv(env_file)
 
 DJANGO_INTERNAL_URL = os.getenv("DJANGO_INTERNAL_URL", "http://localhost:8000")
 DJANGO_INTERNAL_SECRET = os.getenv("DJANGO_INTERNAL_SECRET", "")

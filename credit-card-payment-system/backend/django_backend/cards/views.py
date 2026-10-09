@@ -2,13 +2,14 @@ from rest_framework import generics
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from accounts.role_permissions import CanManagePersonalCards
 from .models import Card
 from .serializers import CardSerializer
 from accounts.notifications import queue_account_email
 from transactions.models import Transaction
 
 class CardListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManagePersonalCards]
     serializer_class = CardSerializer
 
     def get_queryset(self):
@@ -23,7 +24,7 @@ class CardListCreateView(generics.ListCreateAPIView):
         )
 
 class CardDeleteView(generics.DestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManagePersonalCards]
     serializer_class = CardSerializer
 
     def get_queryset(self):

@@ -19,6 +19,22 @@ export const fastapi = axios.create({
   baseURL: import.meta.env.VITE_FASTAPI_URL || "http://localhost:8001"
 });
 
+function getDeviceId() {
+  const key = "paysecure_device_id";
+  let deviceId = localStorage.getItem(key);
+  if (!deviceId && window.crypto?.randomUUID) {
+    deviceId = window.crypto.randomUUID();
+    localStorage.setItem(key, deviceId);
+  }
+  return deviceId;
+}
+
+fastapi.interceptors.request.use((config) => {
+  const deviceId = getDeviceId();
+  if (deviceId) config.headers["X-Device-ID"] = deviceId;
+  return config;
+});
+
 django.interceptors.request.use((config) => {
   const token = localStorage.getItem("access") || sessionStorage.getItem("access");
   if (token) config.headers.Authorization = `Bearer ${token}`;

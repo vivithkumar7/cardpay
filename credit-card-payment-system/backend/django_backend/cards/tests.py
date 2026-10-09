@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.core import mail
 from django.test import override_settings
 from rest_framework.test import APITestCase
@@ -122,6 +123,9 @@ class CardTests(APITestCase):
                 admin_user=self.user,
                 action="credit_limit_updated",
                 details__contains="2500.00",
+                target_type="user_credit_profile",
+                changes__credit_limit__before="0.00",
+                changes__credit_limit__after="2500.00",
             ).exists()
         )
 
@@ -133,7 +137,124 @@ class CardTests(APITestCase):
                 admin_user=self.user,
                 action="card_removed",
                 details__contains="**** 1111",
+                target_type="card",
             ).exists()
+        )
+
+    def test_support_can_read_cards_and_only_block_or_unblock(self):
+        self.user.groups.add(Group.objects.get(name="Support"))
+        card = Card.objects.create(
+            user=self.user,
+            card_type="CREDIT",
+            masked_card_number="************1111",
+            last4="1111",
+            card_holder_name="Test",
+            expiry_month=12,
+            expiry_year=2030,
+        )
+
+        self.assertEqual(self.client.get("/api/admin/cards/").status_code, 200)
+        self.assertEqual(
+            self.client.get(f"/api/admin/cards/{card.id}/").status_code, 200
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/cards/",
+                {
+                    "card_type": "CREDIT",
+                    "card_holder_name": "Test",
+                    "expiry_month": 12,
+                    "expiry_year": 2030,
+                    "card_number": "4111111111111111",
+                    "cvv": "123",
+                },
+                format="json",
+            ).status_code,
+            403,
+        )
+        block = self.client.patch(
+            f"/api/admin/cards/{card.id}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(block.status_code, 200)
+        self.assertTrue(
+            AdminLog.objects.filter(
+                admin_user=self.user,
+                action="card_blocked",
+                target_type="card",
+                target_id=str(card.id),
+                changes__is_active__before=True,
+                changes__is_active__after=False,
+            ).exists()
+        )
+        limit_change = self.client.patch(
+            f"/api/admin/cards/{card.id}/",
+            {"credit_limit": "2500.00"},
+            format="json",
+        )
+        self.assertEqual(limit_change.status_code, 403)
+        self.assertEqual(
+            self.client.delete(f"/api/admin/cards/{card.id}/").status_code, 403
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/cards/{card.id}/").status_code, 403
+        )
+        self.assertEqual(
+            UserCreditProfile.objects.get(user=self.user).credit_limit,
+            Decimal("0.00"),
+        )
+        self.assertFalse(
+            AdminLog.objects.filter(
+                admin_user=self.user, action="credit_limit_updated"
+            ).exists()
+        )
+
+    def test_admin_group_can_manage_cards_without_staff_flag(self):
+        self.user.groups.add(Group.objects.get(name="Admin"))
+        card = Card.objects.create(
+            user=self.user,
+            card_type="CREDIT",
+            masked_card_number="************1111",
+            last4="1111",
+            card_holder_name="Test",
+            expiry_month=12,
+            expiry_year=2030,
+        )
+
+        response = self.client.patch(
+            f"/api/admin/cards/{card.id}/",
+            {"credit_limit": "2500.00"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            UserCreditProfile.objects.get(user=self.user).credit_limit,
+            Decimal("2500.00"),
+        )
+
+    def test_read_only_role_cannot_change_or_delete_cards(self):
+        self.user.groups.add(Group.objects.get(name="Read-Only"))
+        card = Card.objects.create(
+            user=self.user,
+            card_type="CREDIT",
+            masked_card_number="************1111",
+            last4="1111",
+            card_holder_name="Test",
+            expiry_month=12,
+            expiry_year=2030,
+        )
+
+        self.assertEqual(self.client.get("/api/admin/cards/").status_code, 200)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/admin/cards/{card.id}/",
+                {"is_active": False},
+                format="json",
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/admin/cards/{card.id}/").status_code, 403
         )
 
     def test_admin_cannot_remove_a_card_with_transaction_history(self):

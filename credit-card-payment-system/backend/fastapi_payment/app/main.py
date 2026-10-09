@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
+import os
+import time
 import uuid
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Security
+from fastapi import FastAPI, Header, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -22,14 +25,53 @@ app = FastAPI(
     version="1.0.0",
     description="Simulated payment processing service. No real payment gateway is used.",
 )
+logger = logging.getLogger("api.monitoring")
+SLOW_REQUEST_THRESHOLD_MS = float(
+    os.getenv("API_SLOW_REQUEST_THRESHOLD_MS", "1000")
+)
 bearer_auth = HTTPBearer(auto_error=False)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Device-ID"],
 )
+
+@app.middleware("http")
+async def log_api_request(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started) * 1000
+        logger.exception(
+            "API request raised an exception method=%s path=%s duration_ms=%.2f",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+    duration_ms = (time.perf_counter() - started) * 1000
+    log = logger.error if response.status_code >= 500 else (
+        logger.warning if response.status_code >= 400 else logger.info
+    )
+    log(
+        "API request method=%s path=%s status=%s duration_ms=%.2f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    if duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+        logger.warning(
+            "Slow API request method=%s path=%s status=%s duration_ms=%.2f",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    return response
 
 @app.get("/health")
 def health():
@@ -92,7 +134,9 @@ async def dashboard_summary(
 @app.post("/payments/", response_model=PaymentResponse)
 async def make_payment(
     payload: PaymentRequest,
+    request: Request,
     authorization: str | None = Header(default=None),
+    device_id: str | None = Header(default=None, alias="X-Device-ID", max_length=128),
 ):
     authenticated_user_id = authenticate_jwt(authorization)
     if authenticated_user_id != payload.user_id:
@@ -114,7 +158,10 @@ async def make_payment(
             "user_id": payload.user_id,
             "card_id": payload.card_id,
             "amount": str(payload.amount),
+            "category": payload.category,
             "reference": reference,
+            "source_ip": request.client.host if request.client else "",
+            "device_id": device_id or request.headers.get("user-agent", ""),
         },
     )
 
@@ -137,6 +184,7 @@ async def make_payment(
         status=final_status,
         amount=result["amount"],
         currency=result["currency"],
+        fraud_status=result["fraud_status"],
         message=(
             "Payment failed (simulated)."
             if failed

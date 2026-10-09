@@ -54,7 +54,7 @@ function Layout({ children }) {
               <NavLink to="/cards" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Cards</NavLink>
               <NavLink to="/payment" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Payment</NavLink>
               <NavLink to="/transactions" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Activity</NavLink>
-              {user?.is_staff && <NavLink to="/admin-dashboard" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Admin</NavLink>}
+              <NavLink to="/admin-dashboard" className={({isActive}) => `nav-link${isActive ? " is-active" : ""}`}>Admin</NavLink>
               <button
                 type="button"
                 className="theme-toggle"
@@ -221,6 +221,7 @@ function Dashboard() {
   const [user, setUser] = useState(null);
   const [cards, setCards] = useState([]);
   const [tx, setTx] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
   const [summary, setSummary] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -237,9 +238,10 @@ function Dashboard() {
         if (!active) return;
 
         const accessToken = localStorage.getItem("access") || sessionStorage.getItem("access");
-        const [cardResponse, transactionResponse, summaryResponse] = await Promise.all([
+        const [cardResponse, transactionResponse, analyticsResponse, summaryResponse] = await Promise.all([
           django.get("/api/cards/"),
           django.get("/api/transactions/"),
+          django.get("/api/transactions/analytics/usage/"),
           fastapi.get("/dashboard/summary", {
             headers: { Authorization: `Bearer ${accessToken}` }
           })
@@ -248,8 +250,9 @@ function Dashboard() {
 
         setUser(userResponse.data);
         setCards(cardResponse.data);
-        setTx(transactionResponse.data);
+        setTx(transactionResponse.data.results || []);
         setSummary(summaryResponse.data);
+        setAnalytics(analyticsResponse.data);
       } catch (requestError) {
         if (!active) return;
         const message = requestError.response?.status === 401
@@ -277,26 +280,43 @@ function Dashboard() {
   const successfulTransactions = tx.filter(transaction => transaction.status === "SUCCESS");
   const failedTransactions = tx.filter(transaction => transaction.status === "FAILED");
   const pendingTransactions = tx.filter(transaction => transaction.status === "PENDING");
-  const successRate = tx.length ? Math.round((successfulTransactions.length / tx.length) * 100) : 0;
+  const statusCounts = analytics?.transaction_status_counts || {
+    SUCCESS: successfulTransactions.length,
+    FAILED: failedTransactions.length,
+    PENDING: pendingTransactions.length,
+  };
+  const totalStatusCount = Object.values(statusCounts).reduce((sum, count) => sum + count, 0);
+  const successRate = totalStatusCount ? Math.round((statusCounts.SUCCESS / totalStatusCount) * 100) : 0;
   const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const activityDays = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() - (6 - index));
-    const dayTransactions = tx.filter(transaction => new Date(transaction.created_at).toDateString() === date.toDateString());
+  const activityDays = (analytics?.daily_activity || []).map(day => {
+    const date = new Date(`${day.date}T00:00:00`);
     return {
       date,
       label: date.toLocaleDateString("en-IN", { weekday: "short" }),
-      count: dayTransactions.length,
-      successful: dayTransactions.filter(transaction => transaction.status === "SUCCESS").length,
-      failed: dayTransactions.filter(transaction => transaction.status === "FAILED").length,
-      pending: dayTransactions.filter(transaction => transaction.status === "PENDING").length,
+      count: day.SUCCESS + day.FAILED + day.PENDING,
+      successful: day.SUCCESS,
+      failed: day.FAILED,
+      pending: day.PENDING,
     };
   });
   const peakActivity = Math.max(1, ...activityDays.map(day => day.count));
   const recentTransactions = summary?.last_5_transactions || [];
-  const recentInvoices = successfulTransactions.slice(0, 5);
+  const recentInvoices = recentTransactions.filter(transaction => transaction.status === "SUCCESS").slice(0, 5);
+  const monthlySpending = analytics?.monthly_spending || [];
+  const maxMonthlySpending = Math.max(1, ...monthlySpending.map(month => Number(month.spending)));
+  const monthlyPoints = monthlySpending.map((month, index) => {
+    const x = monthlySpending.length < 2 ? 50 : 8 + (index / (monthlySpending.length - 1)) * 84;
+    const y = 88 - (Number(month.spending) / maxMonthlySpending) * 76;
+    return `${x},${y}`;
+  }).join(" ");
+  let categoryOffset = 0;
+  const categoryGradient = (analytics?.category_spending || []).map((category, index, categories) => {
+    const total = categories.reduce((sum, item) => sum + Number(item.spending), 0);
+    const start = categoryOffset;
+    categoryOffset += total ? (Number(category.spending) / total) * 100 : 0;
+    const colors = ["#eabf56", "#174b40", "#d8745f", "#80a890", "#7892ad", "#9b81b1", "#c7cbd0"];
+    return `${colors[index % colors.length]} ${start}% ${categoryOffset}%`;
+  }).join(", ");
   const downloadInvoice = transaction => {
     const invoiceHtml = createInvoiceHtml(transaction, user, money);
     const file = new Blob([invoiceHtml], { type: "text/html;charset=utf-8" });
@@ -308,7 +328,9 @@ function Dashboard() {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    window.setTimeout(() => {
+      if (typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url);
+    }, 1000);
   };
 
   if (loading) return <div className="dashboard-page mx-auto max-w-7xl" role="status" aria-label="Loading dashboard">
@@ -336,7 +358,7 @@ function Dashboard() {
       <Stat label="Total amount spent" value={money.format(Number(summary.total_amount_spent))} note="Settled card purchases" marker="₹" markerClass="bg-amber-100 text-amber-900"/>
       <Stat label="This month" value={money.format(Number(summary.current_month_spending))} note={new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date())} marker="◷" markerClass="bg-emerald-100 text-emerald-800"/>
       <Stat label="Available credit" value={money.format(Number(summary.available_credit_limit))} note={`${cards.filter(card => card.card_type === "CREDIT").length} credit card${cards.filter(card => card.card_type === "CREDIT").length === 1 ? "" : "s"} on file`} marker="↗" markerClass="bg-slate-100 text-slate-800"/>
-      <Stat label="Total transactions" value={summary.total_transactions} note={`${pendingTransactions.length} awaiting completion`} marker="#" markerClass="bg-stone-100 text-stone-700"/>
+      <Stat label="Total transactions" value={summary.total_transactions} note={`${statusCounts.PENDING} awaiting completion`} marker="#" markerClass="bg-stone-100 text-stone-700"/>
     </section>
 
     <section className="dashboard-quick-actions" aria-label="Quick actions">
@@ -416,11 +438,54 @@ function Dashboard() {
           <div className="h-full rounded-full bg-[#f5df35] transition-all" style={{ width: `${successRate}%` }}/>
         </div>
         <div className="mt-6 space-y-4">
-          <StatusCount label="Successful" value={successfulTransactions.length} color="bg-amber-300"/>
-          <StatusCount label="Failed" value={failedTransactions.length} color="bg-rose-400"/>
-          <StatusCount label="Pending" value={pendingTransactions.length} color="bg-slate-400"/>
+          <StatusCount label="Successful" value={statusCounts.SUCCESS} color="bg-amber-300"/>
+          <StatusCount label="Failed" value={statusCounts.FAILED} color="bg-rose-400"/>
+          <StatusCount label="Pending" value={statusCounts.PENDING} color="bg-slate-400"/>
         </div>
         <p className="mt-7 border-t border-white/10 pt-4 text-xs leading-5 text-white/50">Payments are simulated. No real payment gateway is used.</p>
+      </article>
+    </section>
+
+    <section className="grid gap-4 lg:grid-cols-3" aria-label="Card usage analytics">
+      <article className="dashboard-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <p className="dashboard-section-label">SPENDING TREND</p>
+        <h2 className="mt-1 text-base font-semibold">Monthly spending</h2>
+        <p className="mt-1 text-xs text-slate-500">Successful payments · last 6 months</p>
+        <svg className="mt-5 h-36 w-full overflow-visible" viewBox="0 0 100 100" role="img" aria-label="Line chart of monthly spending over the last six months">
+          <line x1="4" y1="88" x2="96" y2="88" stroke="#e3e9e2" strokeWidth="1"/>
+          {monthlyPoints && <polyline points={monthlyPoints} fill="none" stroke="#174b40" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>}
+          {monthlyPoints && monthlyPoints.split(" ").map(point => {
+            const [x, y] = point.split(",");
+            return <circle key={point} cx={x} cy={y} r="2.5" fill="#eabf56" stroke="#174b40" strokeWidth="1"/>;
+          })}
+        </svg>
+        <div className="mt-2 flex justify-between text-[10px] text-slate-500">
+          {monthlySpending.map(month => <span key={month.month}>{new Date(`${month.month}-01T00:00:00`).toLocaleDateString("en-IN", { month: "short" })}</span>)}
+        </div>
+      </article>
+      <article className="dashboard-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <p className="dashboard-section-label">WHERE IT GOES</p>
+        <h2 className="mt-1 text-base font-semibold">Category spending</h2>
+        <p className="mt-1 text-xs text-slate-500">Successful payments · last 6 months</p>
+        <div className="mt-5 flex items-center gap-5">
+          <div className="h-28 w-28 shrink-0 rounded-full" role="img" aria-label="Pie chart of spending by category" style={{ background: categoryGradient ? `conic-gradient(${categoryGradient})` : "#e3e9e2" }}/>
+          <ul className="min-w-0 space-y-2 text-xs">
+            {(analytics?.category_spending || []).slice(0, 6).map((category, index) => (
+              <li key={category.category} className="flex items-center gap-2"><i className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: ["#eabf56", "#174b40", "#d8745f", "#80a890", "#7892ad", "#9b81b1"][index] }}/><span className="truncate text-slate-600">{category.label}</span><strong className="ml-auto tabular-nums text-slate-900">{money.format(Number(category.spending))}</strong></li>
+            ))}
+            {!analytics?.category_spending?.length && <li className="text-slate-500">No categorized spending yet.</li>}
+          </ul>
+        </div>
+      </article>
+      <article className="dashboard-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <p className="dashboard-section-label">CREDIT HEALTH</p>
+        <h2 className="mt-1 text-base font-semibold">Credit utilization</h2>
+        <p className="mt-1 text-xs text-slate-500">Successful credit-card spending against your limit</p>
+        <p className="mt-7 text-3xl font-semibold tabular-nums text-slate-900">{Number(analytics?.credit_utilization_percentage || 0).toFixed(2)}%</p>
+        <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100" role="img" aria-label={`${analytics?.credit_utilization_percentage || 0}% credit utilization`}>
+          <div className="h-full rounded-full bg-[#174b40]" style={{ width: `${Math.min(Number(analytics?.credit_utilization_percentage || 0), 100)}%` }}/>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">{money.format(Number(analytics?.credit_spending || 0))} of {money.format(Number(analytics?.credit_limit || 0))}</p>
       </article>
     </section>
 
@@ -679,10 +744,10 @@ function Cards() {
 }
 
 function Payment() {
-  const [cards,setCards]=useState([]); const [cardId,setCardId]=useState(""); const [amount,setAmount]=useState(""); const [result,setResult]=useState(null); const [error,setError]=useState("");
+  const [cards,setCards]=useState([]); const [cardId,setCardId]=useState(""); const [amount,setAmount]=useState(""); const [category,setCategory]=useState("OTHER"); const [result,setResult]=useState(null); const [error,setError]=useState("");
   const activeCards = cards.filter(card => card.is_active !== false);
   useEffect(()=>{django.get("/api/cards/").then(r=>{const available=r.data.filter(card=>card.is_active !== false);setCards(r.data);if(available[0])setCardId(available[0].id)})},[]);
-  async function submit(e){e.preventDefault();setError("");setResult(null);try{const me=await django.get("/api/auth/me/");const token=localStorage.getItem("access")||sessionStorage.getItem("access");const r=await fastapi.post("/payments/",{user_id:me.data.id,card_id:Number(cardId),amount:amount,currency:"INR"},{headers:{Authorization:`Bearer ${token}`}});setResult(r.data)}catch(err){setError(JSON.stringify(err.response?.data||"Payment failed"));}}
+  async function submit(e){e.preventDefault();setError("");setResult(null);try{const me=await django.get("/api/auth/me/");const token=localStorage.getItem("access")||sessionStorage.getItem("access");const r=await fastapi.post("/payments/",{user_id:me.data.id,card_id:Number(cardId),amount:amount,category,currency:"INR"},{headers:{Authorization:`Bearer ${token}`}});setResult(r.data)}catch(err){setError(JSON.stringify(err.response?.data||"Payment failed"));}}
   const selectedCard = cards.find(card => String(card.id) === String(cardId));
   return <div className="page-shell payment-page">
     <header className="page-heading"><div><p className="eyebrow">SECURE CHECKOUT</p><h1>Make a payment</h1><p className="page-subtitle">A simple, secure way to move money.</p></div><span className="secure-label"><span aria-hidden="true">◆</span> Protected payment</span></header>
@@ -694,6 +759,7 @@ function Payment() {
         <form onSubmit={submit} className="form-stack payment-form">
           <label className="field-label">Pay with<select className="field-control" value={cardId} onChange={e=>setCardId(e.target.value)} required>{activeCards.map(c=><option key={c.id} value={c.id}>{c.card_type} · {c.masked_card_number}</option>)}</select></label>
           <label className="field-label">Amount<input className="field-control amount-control" type="number" step="0.01" min="0.01" placeholder="0.00" value={amount} onChange={e=>setAmount(e.target.value)} required/><span className="input-currency">INR</span></label>
+          <label className="field-label">Spending category<select className="field-control" value={category} onChange={e=>setCategory(e.target.value)}><option value="FOOD">Food & dining</option><option value="SHOPPING">Shopping</option><option value="TRAVEL">Travel</option><option value="BILLS">Bills & utilities</option><option value="HEALTHCARE">Healthcare</option><option value="ENTERTAINMENT">Entertainment</option><option value="OTHER">Other</option></select></label>
           <div className="payment-summary"><span>Payment method</span><strong>{selectedCard ? `${selectedCard.card_type} ending ${selectedCard.last4}` : "No card selected"}</strong><span>Processing</span><strong>Instant</strong></div>
           <button disabled={!activeCards.length} className="button-primary form-submit pay-button">Pay securely <span aria-hidden="true">↗</span></button>
         </form>
@@ -709,16 +775,30 @@ function Payment() {
 
 function Transactions() {
   const [tx,setTx]=useState([]);
-  const [filters,setFilters]=useState({status:"",from_date:"",to_date:"",min_amount:"",max_amount:""});
-  async function load(){
-    const params=Object.fromEntries(Object.entries(filters).filter(([,value])=>value!==""));
-    const r=await django.get("/api/transactions/",{params});setTx(r.data);
-  }
-  useEffect(()=>{load()},[filters]);
-  function updateFilter(event){setFilters({...filters,[event.target.name]:event.target.value});}
+  const [filters,setFilters]=useState({status:"",from_date:"",to_date:"",min_amount:"",max_amount:"",card_search:"",ordering:"-created_at"});
+  const [page,setPage]=useState(1);
+  const [pagination,setPagination]=useState({count:0,next:null,previous:null});
+  const [error,setError]=useState("");
+  useEffect(()=>{
+    let active=true;
+    const params={...Object.fromEntries(Object.entries(filters).filter(([,value])=>value!=="")),page,page_size:20};
+    django.get("/api/transactions/",{params}).then(response=>{
+      if(!active)return;
+      setTx(response.data.results);
+      setPagination({count:response.data.count,next:response.data.next,previous:response.data.previous});
+      setError("");
+    }).catch(requestError=>{
+      if(!active)return;
+      setError(requestError.response?.data?.detail||"Transactions could not be loaded. Please try again.");
+      setTx([]);
+    });
+    return ()=>{active=false;};
+  },[filters,page]);
+  function updateFilter(event){setFilters({...filters,[event.target.name]:event.target.value});setPage(1);}
+  function toggleOrdering(field){setFilters(current=>({...current,ordering:current.ordering===field?`-${field}`:field}));setPage(1);}
   const money = new Intl.NumberFormat("en-IN", {style:"currency",currency:"INR",maximumFractionDigits:2});
   return <div className="page-shell transactions-page">
-    <header className="page-heading"><div><p className="eyebrow">YOUR PAYMENT RECORD</p><h1>Activity</h1><p className="page-subtitle">Every payment, clearly accounted for.</p></div><div className="activity-total"><strong>{tx.length}</strong><span>transactions shown</span></div></header>
+    <header className="page-heading"><div><p className="eyebrow">YOUR PAYMENT RECORD</p><h1>Activity</h1><p className="page-subtitle">Every payment, clearly accounted for.</p></div><div className="activity-total"><strong>{pagination.count}</strong><span>matching transactions</span></div></header>
     <section className="filter-panel" aria-label="Filter transactions">
       <div className="filter-heading"><span className="filter-icon" aria-hidden="true">⌕</span><span>Filter activity</span></div>
       <div className="filter-controls">
@@ -727,20 +807,24 @@ function Transactions() {
         <label className="filter-field"><span>To</span><input aria-label="To date" name="to_date" type="date" value={filters.to_date} onChange={updateFilter}/></label>
         <label className="filter-field"><span>Minimum</span><input aria-label="Minimum amount" name="min_amount" type="number" min="0" step="0.01" placeholder="₹ 0.00" value={filters.min_amount} onChange={updateFilter}/></label>
         <label className="filter-field"><span>Maximum</span><input aria-label="Maximum amount" name="max_amount" type="number" min="0" step="0.01" placeholder="₹ 0.00" value={filters.max_amount} onChange={updateFilter}/></label>
+        <label className="filter-field"><span>Masked card</span><input aria-label="Search masked card number" name="card_search" type="search" placeholder="•••• 1234" value={filters.card_search} onChange={updateFilter}/></label>
       </div>
     </section>
     <section className="transactions-panel" aria-label="Transaction history">
-      <div className="table-scroll"><table className="transactions-table"><thead><tr><th>Reference</th><th>Amount</th><th>Status</th><th>Payment card</th><th>Date & time</th></tr></thead><tbody>{tx.map(x=><tr key={x.id}><td><span className="reference-cell">{x.reference}</span></td><td className="amount-cell">{money.format(Number(x.amount))}</td><td><StatusBadge status={x.status}/></td><td>{x.card_mask || "—"}</td><td>{new Date(x.created_at).toLocaleString()}</td></tr>)}</tbody></table></div>
+      {error&&<p role="alert" className="statement-error">{error}</p>}
+      <div className="table-scroll"><table className="transactions-table"><thead><tr><th>Reference</th><th><button type="button" onClick={()=>toggleOrdering("amount")}>Amount {filters.ordering.endsWith("amount")?(filters.ordering.startsWith("-")?"↓":"↑"):""}</button></th><th><button type="button" onClick={()=>toggleOrdering("status")}>Status {filters.ordering.endsWith("status")?(filters.ordering.startsWith("-")?"↓":"↑"):""}</button></th><th>Payment card</th><th><button type="button" onClick={()=>toggleOrdering("created_at")}>Date & time {filters.ordering.endsWith("created_at")?(filters.ordering.startsWith("-")?"↓":"↑"):""}</button></th></tr></thead><tbody>{tx.map(x=><tr key={x.id}><td><span className="reference-cell">{x.reference}</span></td><td className="amount-cell">{money.format(Number(x.amount))}</td><td><StatusBadge status={x.status}/></td><td>{x.card_mask || "—"}</td><td>{new Date(x.created_at).toLocaleString()}</td></tr>)}</tbody></table></div>
       {!tx.length&&<div className="empty-state table-empty"><span className="empty-mark" aria-hidden="true">↗</span><h3>No matching activity</h3><p>Try adjusting the filters or make your first payment.</p></div>}
-      <footer className="table-footer"><span>Showing {tx.length} transaction{tx.length === 1 ? "" : "s"}</span><span>Updated just now</span></footer>
+      <footer className="table-footer"><span>Showing {pagination.count ? (page-1)*20+1 : 0}–{Math.min(page*20,pagination.count)} of {pagination.count}</span><div className="flex items-center gap-3"><button type="button" disabled={!pagination.previous} onClick={()=>setPage(current=>current-1)}>Previous</button><span>Page {page}</span><button type="button" disabled={!pagination.next} onClick={()=>setPage(current=>current+1)}>Next</button></div></footer>
     </section>
   </div>
 }
 
 function AdminDashboard() {
   const [data,setData]=useState(null);
+  const [health,setHealth]=useState(null);
   const [cards,setCards]=useState([]);
   const [error,setError]=useState("");
+  const [healthError,setHealthError]=useState("");
   const [accessDenied,setAccessDenied]=useState(false);
   const [busyCard,setBusyCard]=useState(null);
   const [cardSearch,setCardSearch]=useState("");
@@ -748,17 +832,20 @@ function AdminDashboard() {
   const [cardActivity,setCardActivity]=useState(null);
   const [activityLoading,setActivityLoading]=useState(false);
   const [activityError,setActivityError]=useState("");
+  const [exportError,setExportError]=useState("");
 
   async function load(searchTerm = cardSearch) {
     try {
-      const [summaryResponse, cardResponse] = await Promise.all([
+      const [summaryResponse, cardResponse, healthResponse] = await Promise.all([
         django.get("/api/admin/summary/"),
         django.get("/api/admin/cards/", {
           params: searchTerm.trim() ? { search: searchTerm.trim() } : {},
         }),
+        django.get("/api/admin/system-health/"),
       ]);
       setData(summaryResponse.data);
       setCards(cardResponse.data);
+      setHealth(healthResponse.data);
       setAccessDenied(false);
     } catch (requestError) {
       if (requestError.response?.status === 403) setAccessDenied(true);
@@ -770,6 +857,53 @@ function AdminDashboard() {
     const timer = window.setTimeout(() => load(cardSearch), 250);
     return () => window.clearTimeout(timer);
   },[cardSearch]);
+
+  useEffect(()=>{
+    const timer = window.setInterval(async()=>{
+      try {
+        const response = await django.get("/api/admin/system-health/");
+        setHealth(response.data);
+        setHealthError("");
+      } catch {
+        setHealth(null);
+        setHealthError("System health could not be refreshed. Check API availability and access.");
+      }
+    },30000);
+    return ()=>window.clearInterval(timer);
+  },[]);
+
+  async function refreshHealth() {
+    try {
+      const response = await django.get("/api/admin/system-health/");
+      setHealth(response.data);
+      setHealthError("");
+    } catch {
+      setHealth(null);
+      setHealthError("System health could not be refreshed. Check API availability and access.");
+    }
+  }
+
+  async function exportAnalytics(format) {
+    setExportError("");
+    try {
+      const response = await django.get("/api/admin/analytics/export/", {
+        params: { file_format: format },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `analytics-summary.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (requestError) {
+      setExportError(
+        requestError.response?.data?.detail || "Analytics export could not be generated."
+      );
+    }
+  }
 
   async function updateCard(cardId, updates) {
     setBusyCard(cardId);
@@ -844,6 +978,44 @@ function AdminDashboard() {
   return <div className="page-shell admin-page">
     <header className="page-heading"><div><p className="eyebrow">OPERATIONS</p><h1>Admin dashboard</h1><p className="page-subtitle">Review payments and manage saved customer cards.</p></div></header>
     {error && <p role="alert" className="form-alert">{error}</p>}
+    <section className="surface-panel" aria-label="System health">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">SYSTEM MONITORING</p>
+          <h2>System health</h2>
+          <p className="page-subtitle">Live status for this application process.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button type="button" className="button-secondary" onClick={refreshHealth}>Refresh health</button>
+          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${health?.status === "healthy" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+            {health?.status || "unavailable"}
+          </span>
+        </div>
+      </div>
+      {healthError && <p role="alert" className="statement-error">{healthError}</p>}
+      {health && <dl className="admin-daily mt-5">
+        {[
+          ["Database", health.database],
+          ["API requests", health.api_requests],
+          ["API failures", health.api_failures],
+          ["Slow requests", health.slow_requests],
+          ["Average response", `${health.average_response_time_ms} ms`],
+          ["Process uptime", `${health.uptime_seconds}s`],
+          ["Last checked", new Date(health.checked_at).toLocaleString()],
+        ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      </dl>}
+      <p className="mt-3 text-xs text-slate-500">Request counters are process-local; they reset when the API process restarts.</p>
+    </section>
+    <section className="surface-panel" aria-label="Analytics exports">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div><p className="eyebrow">REPORTING</p><h2>Analytics summary</h2><p className="page-subtitle">Export transaction and spending summaries for operations.</p></div>
+        <div className="flex gap-2">
+          <button type="button" className="button-secondary" onClick={()=>exportAnalytics("csv")}>Export CSV</button>
+          <button type="button" className="button-primary" onClick={()=>exportAnalytics("pdf")}>Export PDF</button>
+        </div>
+      </div>
+      {exportError && <p role="alert" className="statement-error">{exportError}</p>}
+    </section>
     <div className="grid gap-4 md:grid-cols-4">{Object.entries({Transactions:data.total_transactions,Successful:data.successful,Failed:data.failed,Pending:data.pending}).map(([label,value])=><Stat key={label} label={label} value={value} note="All time" marker={label === "Transactions" ? "↗" : label === "Successful" ? "✓" : label === "Failed" ? "!" : "…"} markerClass={label === "Successful" ? "bg-emerald-100 text-emerald-800" : label === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-100 text-amber-900"}/>)}</div>
     <section className="admin-summary-grid">
       <article className="surface-panel"><h2>Total amount processed</h2><p className="admin-total">₹{data.total_amount}</p></article>

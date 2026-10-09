@@ -4,6 +4,7 @@ from rest_framework import filters, generics, permissions, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from accounts.role_permissions import CanManageCards, CanViewAllCards
 from accounts.models import UserCreditProfile
 from accounts.notifications import queue_account_email
 from audit.models import AdminLog
@@ -24,7 +25,7 @@ class AdminCardActivityPagination(PageNumberPagination):
 
 
 class AdminCardListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, CanViewAllCards]
     serializer_class = AdminCardSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = [
@@ -40,7 +41,7 @@ class AdminCardListView(generics.ListAPIView):
 
 
 class AdminCardActivityView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, CanViewAllCards]
     serializer_class = AdminCardActivitySerializer
     pagination_class = AdminCardActivityPagination
 
@@ -60,7 +61,7 @@ class AdminCardActivityView(generics.ListAPIView):
 
 
 class AdminCardDetailView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, CanManageCards]
     serializer_class = AdminCardSerializer
     queryset = Card.objects.select_related("user", "user__credit_profile")
     http_method_names = ["get", "patch", "delete", "head", "options"]
@@ -84,6 +85,12 @@ class AdminCardDetailView(generics.RetrieveUpdateDestroyAPIView):
                     f"Card id={updated.pk} (**** {updated.last4}) for "
                     f"{updated.user.get_username()} was {state}."
                 ),
+                target_type="card",
+                target_id=str(updated.pk),
+                changes={"is_active": {
+                    "before": previous_active,
+                    "after": updated.is_active,
+                }},
             )
             queue_account_email(
                 updated.user,
@@ -104,6 +111,12 @@ class AdminCardDetailView(generics.RetrieveUpdateDestroyAPIView):
                     f"from {previous_limit:.2f} to "
                     f"{updated_profile.credit_limit:.2f}."
                 ),
+                target_type="user_credit_profile",
+                target_id=str(updated_profile.pk),
+                changes={"credit_limit": {
+                    "before": str(previous_limit),
+                    "after": str(updated_profile.credit_limit),
+                }},
             )
             queue_account_email(
                 updated.user,
@@ -145,6 +158,9 @@ class AdminCardDetailView(generics.RetrieveUpdateDestroyAPIView):
                 f"Card id={card.pk} (**** {card.last4}) for "
                 f"{card.user.get_username()} was removed."
             ),
+            target_type="card",
+            target_id=str(card.pk),
+            changes={"deleted": {"before": False, "after": True}},
         )
         queue_account_email(
             card.user,

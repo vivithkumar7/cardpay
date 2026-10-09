@@ -78,19 +78,33 @@ Before running the services, replace `DJANGO_SECRET_KEY` and `DJANGO_INTERNAL_SE
 
 ### 1. MySQL
 
-For Docker, `docker compose up --build` creates the database and `appuser` automatically. For a local MySQL installation, connect as a MySQL administrator:
+For Docker, `docker compose up --build` creates the database and `appuser`
+automatically; you do not need to run a MySQL setup command. If you need a
+MySQL prompt, first start the database service, then run the client inside the
+Compose container (the sample root password is `rootpassword`):
+
+```powershell
+docker compose up -d mysql
+docker compose exec mysql mysql -uroot -p
+```
+
+When `Enter password:` appears, type `rootpassword` and press Enter; MySQL
+does not display the password as you type. This is the configured credential
+for the current Compose setup. Existing database volumes retain the root
+password from their original initialization, so a volume created with another
+password will reject this sample credential.
+
+For a local MySQL installation, connect as a MySQL administrator. The
+`mysql` command must be installed and available on `PATH`; if PowerShell says
+it is not recognized, install the MySQL command-line client or add its `bin`
+directory to `PATH`, then open a new terminal:
 
 ```powershell
 mysql -u root -p
 ```
 
-If PowerShell says `mysql` is not recognized, use the installed client directly:
-
-```powershell
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p
-```
-
-Then create the database and application user to match `.env`:
+Then, for a local MySQL installation only, create the database and application
+user to match `.env`:
 
 At the `mysql>` prompt, enter only these SQL statements. Do not enter the PowerShell `mysql.exe` launch command here. If the prompt changes to `">`, type `\c` and press Enter to clear the unfinished input.
 
@@ -121,16 +135,28 @@ If you use a different `MYSQL_PASSWORD`, use that same password in the SQL comma
 
 ### 2. Django
 
-```bash
-cd backend/django_backend
+Run Django commands from `backend/django_backend`, where `manage.py` is located.
+Do not run `manage.py` from the FastAPI directory.
+
+```powershell
+Set-Location backend\django_backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 Remove-Item Env:DJANGO_TEST_SQLITE -ErrorAction SilentlyContinue
 python manage.py migrate
 python manage.py createsuperuser
-python manage.py runserver 8000
+python manage.py runserver 0.0.0.0:8000
 ```
+
+For LAN access, the frontend origin must be listed exactly in
+`CORS_ALLOWED_ORIGINS` in the project-root `.env` (include scheme, host/IP, and
+port). For example, if Vite is opened at `http://10.240.223.197:5173`, append
+that exact origin to the comma-separated list. Restart Django after changing
+`.env`. If FastAPI serves browser requests too, restart it as well; Compose
+passes the same CORS list to both services. Do not use wildcard CORS. When
+running locally, both backend settings load the project-root `.env`; in
+Docker, Compose passes the list from `.env` into Django and FastAPI.
 
 Django API:
 
@@ -139,12 +165,16 @@ Django API:
 
 ### 3. FastAPI
 
-```bash
-cd backend/fastapi_payment
+FastAPI does not use Django's `manage.py`. Run Uvicorn from
+`backend/fastapi_payment`, using this service's own virtual environment (not
+the Django virtual environment):
+
+```powershell
+Set-Location ..\fastapi_payment
 python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8001
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Swagger: [FastAPI Swagger UI](http://127.0.0.1:8001/docs)
@@ -161,7 +191,11 @@ Frontend: [http://localhost:5173](http://localhost:5173)
 
 ## Docker
 
-```bash
+Run Docker Compose commands from the project folder containing
+`docker-compose.yml` (`D:\cardpay\credit-card-payment-system` in this setup):
+
+```powershell
+Set-Location D:\cardpay\credit-card-payment-system
 docker compose up --build
 ```
 
@@ -170,13 +204,56 @@ Services:
 - Frontend: [http://localhost:5173](http://localhost:5173)
 - Django: [http://localhost:8000](http://localhost:8000)
 - FastAPI: [http://localhost:8001/docs](http://localhost:8001/docs)
-- MySQL: `localhost:3306`
+- MySQL: `localhost:3307` (container port remains `3306`)
 - Mailpit inbox: [http://localhost:8025](http://localhost:8025) (SMTP on `localhost:1025`)
 
+Compose publishes MySQL on host port `3307` by default to avoid conflicts with
+a local MySQL server on `3306`. To use a different available host port, set
+`MYSQL_PUBLISHED_PORT` in `.env`; application containers continue using
+MySQL's internal port `3306`.
+
+Create a Django superuser to sign in to Django Admin:
+
+```powershell
+Set-Location D:\cardpay\credit-card-payment-system
+docker compose exec django python manage.py createsuperuser
+```
+
+For a non-superuser staff account, assign the **Admin** group. Its Admin-site
+permissions provide the Add buttons for Admin logs and Fraud alerts; Support
+and Read-Only can view fraud alerts but cannot add alerts or audit notes.
+
 Docker routes Django notification email to Mailpit by default. Review successful
-card block/unblock, credit-limit update, and card-removal actions under Django
-Admin's **Admin logs** section; audit records are stored in `admin_logs` and
-contain only masked card numbers.
+card block/unblock, credit-limit update, card-removal, fraud-alert review, and
+transaction changes under Django Admin's **Admin logs** section. The transaction
+change page also shows that transaction's audit history. Audit records are stored
+in `admin_logs` and contain no full card numbers or CVVs.
+
+### Live Docker verification
+
+On 2026-10-09, the Docker Compose stack was built and exercised end to end.
+MySQL, Django, FastAPI, Vite, and Mailpit were all running. The live checks
+covered both Swagger UIs and their OpenAPI documents, Django Admin sign-in,
+customer sign-in and a simulated INR 300 payment, dashboard analytics and
+system health, a card block with its audit record, and delivery of payment and
+card-block notifications to Mailpit. Test accounts and transactions used
+synthetic data.
+
+![Customer checkout showing a successful simulated payment](./screenshots/live-test-payment-success.png)
+
+![Admin dashboard with live health, reporting, and card status](./screenshots/live-test-admin-dashboard.png)
+
+![Django Admin home](./screenshots/live-test-django-admin.png)
+
+![Django Admin transaction audit history](./screenshots/live-test-transaction-admin-audit.png)
+
+![Django Admin audit log list](./screenshots/live-test-django-audit-logs.png)
+
+![Django REST API Swagger UI](./screenshots/live-test-django-swagger.png)
+
+![FastAPI Swagger UI](./screenshots/live-test-fastapi-swagger.png)
+
+![Mailpit inbox showing payment and card-block notifications](./screenshots/live-test-mailpit.png)
 
 ## Demo payment simulation
 
@@ -204,8 +281,107 @@ Django:
 - GET `/api/cards/`
 - DELETE `/api/cards/<id>/`
 - GET `/api/transactions/`
+- GET `/api/transactions/analytics/usage/`
 - GET `/api/admin/export/` (staff/admin only)
 - GET `/api/admin/summary/`
+
+### Monitoring and analytics exports
+
+Both Django and FastAPI log API method, path, status, and response duration;
+failed responses are logged as warnings/errors, exceptions include a traceback,
+and requests slower than `API_SLOW_REQUEST_THRESHOLD_MS` are additionally
+flagged. The default slow-request threshold is 1000 ms. Set that environment
+variable in the deployment environment to tune it.
+
+Users with analytics permissions can open `GET /api/admin/system-health/` for
+database connectivity and process-local request, failure, latency, uptime, and
+slow-request counters. These counters reset on process restart and are not
+shared between worker processes; use centralized metrics/log aggregation for
+multi-worker or production monitoring.
+
+Analytics summaries can be downloaded by analytics-role users through
+`GET /api/admin/analytics/export/?file_format=csv` or `?file_format=pdf`. The Admin
+dashboard exposes both formats alongside the system health panel.
+The health panel refreshes automatically every 30 seconds and can be refreshed
+manually.
+
+![Admin monitoring dashboard showing system health and report exports](./screenshots/admin-monitoring-dashboard.png)
+
+### Django Admin audit screenshots
+
+The Admin logs screen supports searching and filtering transaction audit
+records. Each transaction's Django Admin detail view also shows its own
+chronological audit history. Users in the Django Admin role can add a
+**manual note** to Admin logs; these entries are labeled `manual_note` and
+cannot be edited or deleted. Admin-role users can also add a Fraud alert by
+selecting a transaction and entering rule codes as a JSON list (for example,
+`["manual_review"]`). This flags the transaction and records the manual alert
+creation in Admin logs. Support and Read-Only roles can view fraud alerts but
+cannot add alerts or audit notes.
+
+![Django Admin logs list with transaction audit entry](./screenshots/django-admin-logs.png)
+
+![Django Admin transaction details with audit history](./screenshots/django-transaction-audit.png)
+
+Transaction history is paginated (20 rows by default; `page_size` is capped at
+100) and returns `count`, `next`, `previous`, and `results`. Optional query
+parameters are `status`, `from_date`, `to_date`, `min_amount`, `max_amount`,
+`card_search` (masked number or last four digits), and `ordering`. Sort fields
+are `created_at`, `amount`, `status`, `reference`, and `category`; prefix a
+field with `-` for descending order. Dates use `YYYY-MM-DD`.
+
+The usage analytics endpoint returns six months of successful monthly spending,
+category totals for the same period, all-time credit utilization, all-time
+transaction status totals, and daily attempt counts for the last seven days.
+Payment categories are selected at checkout (Food & dining, Shopping, Travel,
+Bills & utilities, Healthcare, Entertainment, or Other); historical transactions
+default to Other.
+
+### API roles and permissions
+
+The Django migration creates three role groups in `auth_group`; group permissions
+are stored in `auth_group_permissions` and assigned to users through
+`auth_user_groups`:
+
+| Role | Permissions |
+| --- | --- |
+| Admin | View all cards and transactions, block/unblock and delete cards, update credit limits, and view analytics/export. |
+| Support | View all cards and transactions, block/unblock cards, and view analytics/export. Credit-limit changes, card deletion, and payment initiation are not allowed. |
+| Read-Only | View all cards and transactions, analytics/export, and fraud alerts. Card changes, payment initiation, and alert review are not allowed. |
+
+Assign a role by editing the user's **Groups** in Django Admin. Existing staff
+accounts are assigned the Admin group by migration; staff and superusers continue
+to have Admin access. Customer card, transaction, dashboard, and statement APIs
+remain authenticated and scoped to the signed-in user's own data.
+
+Admin card and analytics routes accept these roles: `GET /api/admin/cards/`,
+`GET /api/admin/cards/<id>/`, `GET /api/admin/cards/<id>/activity/`,
+`PATCH /api/admin/cards/<id>/`, `DELETE /api/admin/cards/<id>/`,
+`GET /api/admin/summary/`, and `GET /api/admin/export/`. Support can PATCH only
+`is_active`; Admin can also update `credit_limit` and delete cards. Support and
+Read-Only roles cannot add or remove cards through customer card endpoints or
+submit payments through FastAPI. Admin and Support can review alerts at
+`PATCH /api/admin/fraud-alerts/<id>/` using `{"review_status":"REVIEWED"}` or
+`{"review_status":"FALSE_POSITIVE"}`. All three roles can list alerts at
+`GET /api/admin/fraud-alerts/`; use `?review_status=OPEN` to filter them.
+
+### Fraud detection and alerting
+
+Each payment attempt is evaluated when its pending transaction is created.
+Three or more transactions of at least ₹5,000 within a rolling 10-minute window
+trigger the `repeated_high_value_transactions` rule. A different source IP or
+device identifier compared with another transaction in the same window triggers
+`rapid_location_change` or `rapid_device_change`. The source IP is a network
+location proxy, not a geolocation result. The frontend sends a persistent random
+browser ID in the `X-Device-ID` header; other clients may omit it, in which case
+FastAPI uses the request's user-agent.
+Identifiers are HMAC-fingerprinted before persistence and are not exposed in
+transaction responses.
+
+Detection flags the transaction and creates one reviewable fraud alert; it does
+not automatically decline the simulated payment. An email is queued after the
+database commit for the account holder and active staff/Admin/Support recipients.
+Review status, reviewer, and review time are retained with the fraud record.
 
 FastAPI verifies the JWT and forwards only the authenticated user ID to Django's
 internal summary endpoint using the shared internal secret. Django queries
@@ -234,8 +410,9 @@ FastAPI:
 | --- | --- | --- |
 | Django users | `id`, `username`, `email`, `password`, `is_staff` | `password` contains a Django password hash, never the plaintext password. |
 | Cards | `id`, `user_id`, `card_type`, `masked_card_number`, `last4`, `card_holder_name`, `expiry_month`, `expiry_year`, `is_active` | No full card number or CVV columns are stored. |
-| Transactions | `id`, `user_id`, `card_id`, `amount`, `currency`, `status`, `reference`, `failure_reason`, timestamps | References the saved card; payment is simulated and has no gateway credentials. |
-| Admin logs | `id`, `admin_user_id`, `action`, `details`, `created_at` | Administrative audit records; no card PAN or CVV fields. |
+| Transactions | `id`, `user_id`, `card_id`, `amount`, `currency`, `status`, `fraud_status`, `reference`, `failure_reason`, timestamps | References the saved card; payment is simulated and has no gateway credentials. Window-query and fraud-status indexes support fraud evaluation/review. |
+| Fraud alerts | `id`, `transaction_id`, `user_id`, `rule_codes`, `review_status`, `reviewed_by_id`, `reviewed_at`, `detected_at` | One review record per flagged transaction; source location/device identifiers are HMAC-fingerprinted on transactions. |
+| Admin logs | `id`, `admin_user_id`, `action`, `target_type`, `target_id`, `changes`, `details`, `created_at` | Structured audit records, including before/after values for card status, credit limits, transaction edits, and fraud-alert review; no card PAN or CVV fields. |
 
 The Django migrations define the authoritative schema. MySQL is used for normal runs; `DJANGO_TEST_SQLITE=1` is available for isolated tests and local live demos.
 
@@ -310,6 +487,11 @@ the request asserts the response fields and that the recent transaction list is
 limited to five entries.
 
 ## Screenshots
+
+The six-page project implementation report, with product and live-test images,
+is available at
+[reports/card-payment-system-project-report.pdf](./reports/card-payment-system-project-report.pdf).
+Regenerate it with `python reports/generate_project_report.py`.
 
 The dashboard summary UI screenshot is available at
 [submission/screenshots/dashboard-summary.png](./submission/screenshots/dashboard-summary.png).
